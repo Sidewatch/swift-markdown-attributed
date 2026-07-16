@@ -146,6 +146,84 @@ public final class MarkdownTableAttachment: NSTextAttachment {
         return grid
     }
 
+    /// Fits `grid` (built by ``makeGridView()``) into `maxWidth` points.
+    ///
+    /// The hosting text surface has no horizontal scroller, so a table wider
+    /// than the line fragment would simply be clipped — real-world tables
+    /// carry whole sentences per cell and can measure thousands of points
+    /// wide as single-line labels. When the grid's natural width overflows,
+    /// the overflowing columns are shrunk (columns already narrower than
+    /// their fair share keep their natural width; the wide ones split what
+    /// remains) and their labels switched to word-wrapping at the allotted
+    /// width, trading width for height. Within budget, the grid is left at
+    /// its natural single-line size. Idempotent per width — layout calls
+    /// ``MarkdownTableViewProvider/attachmentBounds(for:location:textContainer:proposedLineFragment:position:)``
+    /// repeatedly.
+    func fit(grid: NSGridView, to maxWidth: CGFloat) {
+        let columnCount = grid.numberOfColumns
+        guard maxWidth > 0, columnCount > 0, grid.numberOfRows > 0 else { return }
+
+        // Natural (single-line) width of every column: widest cell label wins.
+        // Wrapping labels from a previous fit measure at their allotted width,
+        // so reset to single-line first — this keeps the pass idempotent and
+        // lets columns grow back when the pane widens.
+        var natural = [CGFloat](repeating: 0, count: columnCount)
+        func forEachLabel(_ body: (Int, NSTextField) -> Void) {
+            for column in 0..<columnCount {
+                for row in 0..<grid.numberOfRows {
+                    guard let label = grid.cell(atColumnIndex: column, rowIndex: row).contentView as? NSTextField else { continue }
+                    body(column, label)
+                }
+            }
+        }
+        forEachLabel { _, label in
+            label.lineBreakMode = .byClipping
+            label.usesSingleLineMode = false
+            label.cell?.wraps = false
+            label.maximumNumberOfLines = 1
+            label.preferredMaxLayoutWidth = 0
+        }
+        forEachLabel { column, label in
+            natural[column] = max(natural[column], ceil(label.fittingSize.width))
+        }
+
+        let spacing = grid.columnSpacing * CGFloat(max(0, columnCount - 1))
+        let available = maxWidth - spacing
+        guard natural.reduce(0, +) > available, available > 0 else { return }
+
+        // Distribute `available` across columns: repeatedly grant columns
+        // whose natural width fits under the current fair share, then split
+        // what's left among the wider ones (floored so a column never
+        // becomes unreadably narrow, even if that overflows a hair).
+        let minColumnWidth: CGFloat = 40
+        var allotted = natural
+        var flexible = Set(0..<columnCount)
+        var remaining = available
+        while !flexible.isEmpty {
+            let fair = remaining / CGFloat(flexible.count)
+            let fitting = flexible.filter { natural[$0] <= fair }
+            if fitting.isEmpty {
+                for column in flexible { allotted[column] = max(fair, minColumnWidth) }
+                break
+            }
+            for column in fitting {
+                allotted[column] = natural[column]
+                remaining -= natural[column]
+                flexible.remove(column)
+            }
+        }
+
+        // Wrap the shrunk columns' labels at their allotted width.
+        forEachLabel { column, label in
+            guard allotted[column] < natural[column] else { return }
+            label.lineBreakMode = .byWordWrapping
+            label.usesSingleLineMode = false
+            label.cell?.wraps = true
+            label.maximumNumberOfLines = 0
+            label.preferredMaxLayoutWidth = floor(allotted[column])
+        }
+    }
+
     /// Merges the grid regions occupied by spanning cells (colspan/rowspan
     /// greater than one). Covered cells (span 0) are skipped — they are the
     /// empty placeholders the merge swallows — and every range is clamped to
@@ -184,7 +262,10 @@ final class MarkdownTableViewProvider: NSTextAttachmentViewProvider {
         }
     }
 
-    /// Reports the grid's fitting size so the line fragment reserves room for it.
+    /// Reports the grid's fitting size so the line fragment reserves room for
+    /// it — after fitting the grid into the proposed line fragment's width
+    /// (overflowing columns wrap rather than clip; see
+    /// ``MarkdownTableAttachment/fit(grid:to:)``).
     override func attachmentBounds(
         for attributes: [NSAttributedString.Key: Any],
         location: NSTextLocation,
@@ -193,6 +274,9 @@ final class MarkdownTableViewProvider: NSTextAttachmentViewProvider {
         position: CGPoint
     ) -> CGRect {
         if view == nil { loadView() }
+        if let grid = view as? NSGridView, let attachment = textAttachment as? MarkdownTableAttachment {
+            attachment.fit(grid: grid, to: proposedLineFragment.width)
+        }
         let size = view?.fittingSize ?? .zero
         return CGRect(origin: .zero, size: size)
     }
