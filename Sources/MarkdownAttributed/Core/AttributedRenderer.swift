@@ -46,7 +46,10 @@ struct AttributedRenderer: MarkupVisitor {
 
     // MARK: - Fallback
 
-    /// Any node without a dedicated visitor renders as its children, joined.
+    /// Any node without a dedicated visitor renders as its children, joined —
+    /// the transparent-container fallback. Pure containers with no content of
+    /// their own (`Document`, `DoxygenAbstract`, `DoxygenDiscussion`, the
+    /// table sub-nodes reached via ``visitTable(_:)``) rely on it by design.
     mutating func defaultVisit(_ markup: Markup) -> NSAttributedString {
         join(markup)
     }
@@ -101,17 +104,37 @@ struct AttributedRenderer: MarkupVisitor {
     }
 
     mutating func visitInlineCode(_ inlineCode: InlineCode) -> NSAttributedString {
-        var attributes = inlineAttributes()
-        let mono = style.monospacedFont
-        attributes[.font] = NSFont(descriptor: mono.fontDescriptor, size: currentFont.pointSize) ?? mono
-        attributes[.backgroundColor] = style.codeBackgroundColor
-        return NSAttributedString(string: inlineCode.code, attributes: attributes)
+        NSAttributedString(string: inlineCode.code, attributes: codeVoiceAttributes())
     }
 
+    /// A symbol link (``` ``Type/member`` ```, parsed with `.parseSymbolLinks`)
+    /// renders its destination in code voice, per swift-markdown's guidance.
+    mutating func visitSymbolLink(_ symbolLink: SymbolLink) -> NSAttributedString {
+        NSAttributedString(string: symbolLink.destination ?? "", attributes: codeVoiceAttributes())
+    }
+
+    /// A custom inline node (programmatically built trees only — the parser
+    /// never produces one) renders its raw text like plain inline text.
+    mutating func visitCustomInline(_ customInline: CustomInline) -> NSAttributedString {
+        NSAttributedString(string: customInline.text, attributes: inlineAttributes())
+    }
+
+    /// `^[text](key: value)` renders its children; the attribute payload is
+    /// interpretation metadata this renderer has no channel for, so it is skipped.
+    mutating func visitInlineAttributes(_ attributes: InlineAttributes) -> NSAttributedString {
+        join(attributes)
+    }
+
+    /// Renders the link's children with `.link` styling; a childless link
+    /// (possible in programmatic trees) falls back to its destination as the
+    /// visible text so it never vanishes.
     mutating func visitLink(_ link: Markdown.Link) -> NSAttributedString {
         let saved = linkDestination
         linkDestination = link.destination ?? saved
-        let result = join(link)
+        var result: NSAttributedString = join(link)
+        if result.length == 0, let destination = linkDestination, !destination.isEmpty {
+            result = NSAttributedString(string: destination, attributes: inlineAttributes())
+        }
         linkDestination = saved
         return result
     }
@@ -138,8 +161,10 @@ struct AttributedRenderer: MarkupVisitor {
         return NSAttributedString(attachment: attachment)
     }
 
+    /// Raw inline HTML (`<b>`, `<br>`, …) renders literally in code voice so
+    /// the tag is visible and clearly distinguished from prose.
     mutating func visitInlineHTML(_ inlineHTML: InlineHTML) -> NSAttributedString {
-        NSAttributedString(string: inlineHTML.rawHTML, attributes: inlineAttributes())
+        NSAttributedString(string: inlineHTML.rawHTML, attributes: codeVoiceAttributes())
     }
 
     // MARK: - Block nodes
@@ -148,30 +173,9 @@ struct AttributedRenderer: MarkupVisitor {
     /// hanging indent) when this is the first paragraph of a list item.
     mutating func visitParagraph(_ paragraph: Paragraph) -> NSAttributedString {
         let content = join(paragraph)
+        let (paragraphStyle, marker) = listAwareBlockStart()
         let result = NSMutableAttributedString()
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.paragraphSpacing = style.paragraphSpacing
-
-        let quoteBase = CGFloat(quoteDepth) * style.quoteIndent
-        if listDepth > 0 {
-            // Hanging indent: text sits at `head`; a marker line starts one
-            // list level shallower, with a tab stop pulling text back to `head`.
-            let head = quoteBase + CGFloat(listDepth) * style.listIndent
-            paragraphStyle.headIndent = head
-            paragraphStyle.tabStops = [NSTextTab(textAlignment: .left, location: head)]
-            paragraphStyle.defaultTabInterval = style.listIndent
-            if let marker = pendingListMarker {
-                pendingListMarker = nil
-                paragraphStyle.firstLineHeadIndent = quoteBase + CGFloat(listDepth - 1) * style.listIndent
-                result.append(marker)
-            } else {
-                paragraphStyle.firstLineHeadIndent = head
-            }
-        } else {
-            paragraphStyle.firstLineHeadIndent = quoteBase
-            paragraphStyle.headIndent = quoteBase
-        }
-
+        if let marker { result.append(marker) }
         result.append(content)
         return finishBlock(result, paragraphStyle: paragraphStyle)
     }
@@ -227,13 +231,22 @@ struct AttributedRenderer: MarkupVisitor {
         return finishBlock(content, paragraphStyle: paragraphStyle)
     }
 
+    /// A raw HTML block renders verbatim, styled like a code block (monospaced
+    /// on the code background — the `codeFormatter` hook is *not* consulted).
     mutating func visitHTMLBlock(_ html: HTMLBlock) -> NSAttributedString {
         let content = NSMutableAttributedString(
             string: html.rawHTML.trimmingCharacters(in: .newlines),
-            attributes: [.font: style.monospacedFont, .foregroundColor: style.secondaryTextColor]
+            attributes: [
+                .font: style.monospacedFont,
+                .foregroundColor: quoteDepth > 0 ? style.secondaryTextColor : style.textColor,
+                .backgroundColor: style.codeBackgroundColor,
+            ]
         )
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
+        let base = CGFloat(quoteDepth) * style.quoteIndent + CGFloat(listDepth) * style.listIndent
+        paragraphStyle.firstLineHeadIndent = base
+        paragraphStyle.headIndent = base
         return finishBlock(content, paragraphStyle: paragraphStyle)
     }
 
@@ -245,7 +258,40 @@ struct AttributedRenderer: MarkupVisitor {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
         paragraphStyle.paragraphSpacingBefore = style.paragraphSpacing
+        let base = CGFloat(quoteDepth) * style.quoteIndent + CGFloat(listDepth) * style.listIndent
+        paragraphStyle.firstLineHeadIndent = base
+        paragraphStyle.headIndent = base
         return finishBlock(rule, paragraphStyle: paragraphStyle)
+    }
+
+    /// A block directive (`@Name { … }`, parsed only with `.parseBlockDirectives`)
+    /// is a transparent container: its children render in place; the directive
+    /// name and argument text are interpretation metadata and are skipped.
+    mutating func visitBlockDirective(_ blockDirective: BlockDirective) -> NSAttributedString {
+        join(blockDirective)
+    }
+
+    /// A custom block node (programmatically built trees only — the parser
+    /// never produces one) is a transparent container for its block children.
+    mutating func visitCustomBlock(_ customBlock: CustomBlock) -> NSAttributedString {
+        join(customBlock)
+    }
+
+    // MARK: - Doxygen commands (parsed only with `.parseMinimalDoxygen`)
+
+    /// `\param name …` renders its description labeled "Parameter name: " in bold.
+    mutating func visitDoxygenParameter(_ doxygenParam: DoxygenParameter) -> NSAttributedString {
+        labeledBlock("Parameter \(doxygenParam.name): ", doxygenParam)
+    }
+
+    /// `\returns …` renders its description labeled "Returns: " in bold.
+    mutating func visitDoxygenReturns(_ doxygenReturns: DoxygenReturns) -> NSAttributedString {
+        labeledBlock("Returns: ", doxygenReturns)
+    }
+
+    /// `\note …` renders its content labeled "Note: " in bold.
+    mutating func visitDoxygenNote(_ doxygenNote: DoxygenNote) -> NSAttributedString {
+        labeledBlock("Note: ", doxygenNote)
     }
 
     // MARK: - Lists
@@ -297,31 +343,55 @@ struct AttributedRenderer: MarkupVisitor {
 
     // MARK: - Tables
 
-    /// Renders each cell through the inline visitor, then packs the results
-    /// into a ``MarkdownTableAttachment`` block.
+    /// Renders each cell through the inline visitor, then packs the results —
+    /// plus the delimiter-row column alignments and any cell spans — into a
+    /// ``MarkdownTableAttachment`` block, indented to the current quote/list
+    /// depth (consuming the list marker when the table opens a list item).
     mutating func visitTable(_ table: Markdown.Table) -> NSAttributedString {
+        let alignments: [NSTextAlignment] = table.columnAlignments.map { alignment in
+            switch alignment {
+            case .left: return .left
+            case .center: return .center
+            case .right: return .right
+            case nil: return .natural
+            }
+        }
+
         // Header cells render bold; all cells go through the same inline visitor.
         let savedTraits = traits
         traits.insert(.bold)
         var header: [NSAttributedString] = []
+        var headerSpans: [MarkdownTableAttachment.CellSpan] = []
         for case let cell as Markdown.Table.Cell in table.head.children {
             header.append(join(cell))
+            headerSpans.append(.init(colspan: Int(cell.colspan), rowspan: Int(cell.rowspan)))
         }
         traits = savedTraits
 
         var rows: [[NSAttributedString]] = []
+        var rowSpans: [[MarkdownTableAttachment.CellSpan]] = []
         for case let row as Markdown.Table.Row in table.body.children {
             var cells: [NSAttributedString] = []
+            var spans: [MarkdownTableAttachment.CellSpan] = []
             for case let cell as Markdown.Table.Cell in row.children {
                 cells.append(join(cell))
+                spans.append(.init(colspan: Int(cell.colspan), rowspan: Int(cell.rowspan)))
             }
             rows.append(cells)
+            rowSpans.append(spans)
         }
 
-        let attachment = MarkdownTableAttachment(headerCells: header, rows: rows)
-        let content = NSMutableAttributedString(attachment: attachment)
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.paragraphSpacing = style.paragraphSpacing
+        let attachment = MarkdownTableAttachment(
+            headerCells: header,
+            rows: rows,
+            columnAlignments: alignments,
+            headerSpans: headerSpans,
+            rowSpans: rowSpans
+        )
+        let (paragraphStyle, marker) = listAwareBlockStart()
+        let content = NSMutableAttributedString()
+        if let marker { content.append(marker) }
+        content.append(NSAttributedString(attachment: attachment))
         return finishBlock(content, paragraphStyle: paragraphStyle)
     }
 
@@ -342,6 +412,74 @@ struct AttributedRenderer: MarkupVisitor {
             attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
         return attributes
+    }
+
+    /// The attribute run for code-voice inline spans (inline code, inline
+    /// HTML, symbol links): the monospaced font re-sized to the surrounding
+    /// text plus the code background, layered over the inline attributes.
+    private func codeVoiceAttributes() -> [NSAttributedString.Key: Any] {
+        var attributes = inlineAttributes()
+        let mono = style.monospacedFont
+        attributes[.font] = NSFont(descriptor: mono.fontDescriptor, size: currentFont.pointSize) ?? mono
+        attributes[.backgroundColor] = style.codeBackgroundColor
+        return attributes
+    }
+
+    /// Builds the paragraph style for a block at the current quote/list depth
+    /// and consumes the pending list marker when one is staged. Returns the
+    /// style plus the marker the block must prepend (nil when the block does
+    /// not open a list item).
+    ///
+    /// Inside a list the style gets a hanging indent: text sits at `head`; the
+    /// marker line starts one list level shallower, with a tab stop pulling
+    /// its text back to `head`.
+    private mutating func listAwareBlockStart() -> (paragraphStyle: NSMutableParagraphStyle, marker: NSAttributedString?) {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.paragraphSpacing = style.paragraphSpacing
+        let quoteBase = CGFloat(quoteDepth) * style.quoteIndent
+        var marker: NSAttributedString?
+        if listDepth > 0 {
+            let head = quoteBase + CGFloat(listDepth) * style.listIndent
+            paragraphStyle.headIndent = head
+            paragraphStyle.tabStops = [NSTextTab(textAlignment: .left, location: head)]
+            paragraphStyle.defaultTabInterval = style.listIndent
+            if let pending = pendingListMarker {
+                pendingListMarker = nil
+                marker = pending
+                paragraphStyle.firstLineHeadIndent = quoteBase + CGFloat(listDepth - 1) * style.listIndent
+            } else {
+                paragraphStyle.firstLineHeadIndent = head
+            }
+        } else {
+            paragraphStyle.firstLineHeadIndent = quoteBase
+            paragraphStyle.headIndent = quoteBase
+        }
+        return (paragraphStyle, marker)
+    }
+
+    /// Renders a labeled Doxygen container (`\param`, `\returns`, `\note`):
+    /// its children, with `label` prefixed in bold to the first paragraph.
+    /// A childless command renders as just the label so it never vanishes.
+    private mutating func labeledBlock(_ label: String, _ node: Markup) -> NSAttributedString {
+        let content = join(node)
+        guard content.length > 0 else {
+            var attributes = inlineAttributes()
+            attributes[.font] = ((attributes[.font] as? NSFont) ?? style.bodyFont).mdAddingTraits(.bold)
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.paragraphSpacing = style.paragraphSpacing
+            return finishBlock(
+                NSMutableAttributedString(string: label, attributes: attributes),
+                paragraphStyle: paragraphStyle
+            )
+        }
+        // Inherit the first paragraph's attributes (paragraph style included)
+        // so the label sits inside the same visual paragraph, bolded. Never
+        // copy an attachment — the label is plain text.
+        var attributes = content.attributes(at: 0, effectiveRange: nil)
+        attributes.removeValue(forKey: .attachment)
+        attributes[.font] = ((attributes[.font] as? NSFont) ?? style.bodyFont).mdAddingTraits(.bold)
+        content.insert(NSAttributedString(string: label, attributes: attributes), at: 0)
+        return content
     }
 
     /// Terminates a block: appends the block newline, applies the paragraph

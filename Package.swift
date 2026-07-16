@@ -18,6 +18,13 @@ let package = Package(
             dependencies: [.product(name: "Markdown", package: "swift-markdown")],
             path: "Sources"
         ),
-        .testTarget(name: "MarkdownAttributedTests", dependencies: ["MarkdownAttributed"], path: "Tests"),
+        .testTarget(
+            name: "MarkdownAttributedTests",
+            dependencies: [
+                "MarkdownAttributed",
+                .product(name: "Markdown", package: "swift-markdown"),
+            ],
+            path: "Tests"
+        ),
     ]
 )

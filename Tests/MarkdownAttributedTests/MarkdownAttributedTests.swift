@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Markdown
 import XCTest
 @testable import MarkdownAttributed
 
@@ -41,14 +42,38 @@ final class MarkdownAttributedTests: XCTestCase {
     }
 
     private func firstTableAttachment(in rendered: NSAttributedString) -> MarkdownTableAttachment? {
-        var found: MarkdownTableAttachment?
-        rendered.enumerateAttribute(.attachment, in: NSRange(location: 0, length: rendered.length)) { value, _, stop in
+        allTableAttachments(in: rendered).first
+    }
+
+    /// Every table attachment in `rendered`, in document order.
+    private func allTableAttachments(in rendered: NSAttributedString) -> [MarkdownTableAttachment] {
+        var found: [MarkdownTableAttachment] = []
+        rendered.enumerateAttribute(.attachment, in: NSRange(location: 0, length: rendered.length)) { value, _, _ in
             if let table = value as? MarkdownTableAttachment {
-                found = table
-                stop.pointee = true
+                found.append(table)
             }
         }
         return found
+    }
+
+    /// Renders `markdown` through the internal renderer with non-default parse
+    /// options (symbol links, block directives, Doxygen — the public API
+    /// parses with the defaults only). Unlike the public API, the result keeps
+    /// its trailing block newline.
+    private func renderWithOptions(
+        _ markdown: String,
+        options: ParseOptions,
+        style: MarkdownStyle = .default
+    ) -> NSAttributedString {
+        let document = Markdown.Document(parsing: markdown, options: options)
+        var renderer = AttributedRenderer(style: style)
+        return renderer.visit(document)
+    }
+
+    /// Depth-first walk over `node` and all of its descendants.
+    private func walk(_ node: Markup, _ body: (Markup) -> Void) {
+        body(node)
+        for child in node.children { walk(child, body) }
     }
 
     // MARK: - Headings
@@ -435,5 +460,402 @@ final class MarkdownAttributedTests: XCTestCase {
         let rendered = MarkdownAttributed.render(markdown)
         XCTAssertGreaterThan(rendered.length, 0)
         XCTAssertNotNil(firstTableAttachment(in: rendered))
+    }
+
+    // MARK: - Breaks
+
+    func testSoftBreakRendersAsSpace() {
+        let rendered = MarkdownAttributed.render("line one\nline two")
+        XCTAssertEqual(rendered.string, "line one line two")
+    }
+
+    func testHardLineBreakRendersAsLineSeparator() {
+        // A backslash before the newline is a CommonMark hard break.
+        let rendered = MarkdownAttributed.render("alpha\\\nbravo")
+        XCTAssertEqual(rendered.string, "alpha\u{2028}bravo")
+    }
+
+    // MARK: - Raw HTML
+
+    func testInlineHTMLRendersLiterallyInCodeVoice() {
+        let rendered = MarkdownAttributed.render("Some <b>bold-ish</b> text.")
+        let attrs = attributes(of: "<b>", in: rendered)
+        XCTAssertTrue((attrs[.font] as? NSFont)?.isFixedPitch ?? false)
+        XCTAssertEqual((attrs[.font] as? NSFont)?.pointSize, style.bodyFont.pointSize)
+        XCTAssertEqual(attrs[.backgroundColor] as? NSColor, style.codeBackgroundColor)
+        // The text between the tags stays plain prose.
+        XCTAssertEqual(attributes(of: "bold-ish", in: rendered)[.font] as? NSFont, style.bodyFont)
+        XCTAssertNil(attributes(of: "bold-ish", in: rendered)[.backgroundColor])
+    }
+
+    func testHTMLBlockRendersVerbatimStyledLikeACodeBlock() {
+        let rendered = MarkdownAttributed.render("<div>\n  <p>hi</p>\n</div>")
+        XCTAssertTrue(rendered.string.contains("<div>"))
+        XCTAssertTrue(rendered.string.contains("<p>hi</p>"))
+        let attrs = attributes(of: "<div>", in: rendered)
+        XCTAssertEqual(attrs[.font] as? NSFont, style.monospacedFont)
+        XCTAssertEqual(attrs[.backgroundColor] as? NSColor, style.codeBackgroundColor)
+        XCTAssertEqual(attrs[.foregroundColor] as? NSColor, style.textColor)
+    }
+
+    func testHTMLBlockIsNotSentToTheCodeFormatter() {
+        var called = false
+        var custom = MarkdownStyle.default
+        custom.codeFormatter = { code, _ in
+            called = true
+            return NSAttributedString(string: code)
+        }
+        let rendered = MarkdownAttributed.render("<div>\n  raw\n</div>", style: custom)
+        XCTAssertFalse(called)
+        XCTAssertTrue(rendered.string.contains("<div>"))
+    }
+
+    // MARK: - Symbol links, autolinks, childless links
+
+    func testSymbolLinkRendersDestinationInCodeVoice() {
+        let rendered = renderWithOptions("Use ``MyType/method(_:)`` now.", options: [.parseSymbolLinks])
+        let attrs = attributes(of: "MyType/method(_:)", in: rendered)
+        XCTAssertTrue((attrs[.font] as? NSFont)?.isFixedPitch ?? false)
+        XCTAssertEqual(attrs[.backgroundColor] as? NSColor, style.codeBackgroundColor)
+    }
+
+    func testAutolinkRendersAsLink() {
+        let rendered = MarkdownAttributed.render("Visit <https://swift.org> today.")
+        let attrs = attributes(of: "https://swift.org", in: rendered)
+        XCTAssertEqual(attrs[.link] as? URL, URL(string: "https://swift.org"))
+        XCTAssertEqual(attrs[.foregroundColor] as? NSColor, style.linkColor)
+    }
+
+    func testChildlessLinkFallsBackToItsDestination() {
+        // Only programmatic trees can produce a Link with no children.
+        let document = Markdown.Document([Paragraph(Markdown.Link(destination: "https://example.com"))] as [BlockMarkup])
+        var renderer = AttributedRenderer(style: .default)
+        let rendered = renderer.visit(document)
+        XCTAssertTrue(rendered.string.contains("https://example.com"))
+        XCTAssertNotNil(attributes(of: "https://example.com", in: rendered)[.link])
+    }
+
+    // MARK: - Custom nodes (programmatic trees only)
+
+    func testCustomInlineRendersItsText() {
+        let document = Markdown.Document(
+            [Paragraph(Markdown.Text("before "), CustomInline("custom inline"))] as [BlockMarkup]
+        )
+        var renderer = AttributedRenderer(style: .default)
+        let rendered = renderer.visit(document)
+        XCTAssertTrue(rendered.string.contains("custom inline"))
+        XCTAssertEqual(attributes(of: "custom inline", in: rendered)[.font] as? NSFont, style.bodyFont)
+    }
+
+    func testCustomBlockRendersItsChildren() {
+        let document = Markdown.Document(
+            [CustomBlock([Paragraph(Markdown.Text("custom block body"))] as [BlockMarkup])] as [BlockMarkup]
+        )
+        var renderer = AttributedRenderer(style: .default)
+        let rendered = renderer.visit(document)
+        XCTAssertTrue(rendered.string.contains("custom block body"))
+    }
+
+    // MARK: - Block directives & inline attributes
+
+    func testBlockDirectiveRendersChildrenAndSkipsItsName() {
+        let source = """
+        @Metadata {
+          Directive body paragraph.
+        }
+        """
+        let rendered = renderWithOptions(source, options: [.parseBlockDirectives])
+        XCTAssertTrue(rendered.string.contains("Directive body paragraph."))
+        XCTAssertFalse(rendered.string.contains("Metadata"))
+        XCTAssertFalse(rendered.string.contains("@"))
+    }
+
+    func testInlineAttributesRendersChildrenAndSkipsTheAttributes() {
+        let rendered = MarkdownAttributed.render("Look ^[styled text](rainbow: extreme) here.")
+        XCTAssertTrue(rendered.string.contains("styled text"))
+        XCTAssertFalse(rendered.string.contains("rainbow"))
+        XCTAssertEqual(attributes(of: "styled text", in: rendered)[.font] as? NSFont, style.bodyFont)
+    }
+
+    // MARK: - Doxygen commands
+
+    func testDoxygenCommandsRenderWithBoldLabels() {
+        let source = #"""
+        \param coordinate The place to go.
+
+        \returns A boolean.
+
+        \note Stay hydrated.
+        """#
+        let rendered = renderWithOptions(source, options: [.parseBlockDirectives, .parseMinimalDoxygen])
+        XCTAssertTrue(rendered.string.contains("Parameter coordinate: The place to go."))
+        XCTAssertTrue(rendered.string.contains("Returns: A boolean."))
+        XCTAssertTrue(rendered.string.contains("Note: Stay hydrated."))
+        XCTAssertTrue(font(of: "Parameter coordinate:", in: rendered)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false,
+                      "the Doxygen label should be bold")
+        XCTAssertFalse(font(of: "The place to go.", in: rendered)?.fontDescriptor.symbolicTraits.contains(.bold) ?? true,
+                       "the description should stay regular weight")
+    }
+
+    // MARK: - Table alignment & spans
+
+    func testTableColumnAlignmentsExposedAndAppliedToGrid() throws {
+        let markdown = """
+        | Left | Center | Right |
+        |:-----|:------:|------:|
+        | a    | b      | c     |
+        """
+        let table = try XCTUnwrap(firstTableAttachment(in: MarkdownAttributed.render(markdown)))
+        XCTAssertEqual(table.columnAlignments, [.left, .center, .right])
+
+        let grid = table.makeGridView()
+        XCTAssertEqual(grid.column(at: 0).xPlacement, .leading)
+        XCTAssertEqual(grid.column(at: 1).xPlacement, .center)
+        XCTAssertEqual(grid.column(at: 2).xPlacement, .trailing)
+        let centerLabel = grid.cell(atColumnIndex: 1, rowIndex: 1).contentView as? NSTextField
+        XCTAssertEqual(centerLabel?.alignment, .center)
+    }
+
+    func testTableCellSpansExposedAndMergedInGrid() throws {
+        let markdown = """
+        | one | two | three |
+        | --- | --- | ----- |
+        | big      || small |
+        | ^        || small |
+        """
+        let table = try XCTUnwrap(firstTableAttachment(in: MarkdownAttributed.render(markdown)))
+        // The spanning cell holds the content; covered cells are empty placeholders.
+        XCTAssertEqual(table.rows[0].map(\.string), ["big", "", "small"])
+        XCTAssertEqual(table.rows[1].map(\.string), ["", "", "small"])
+        XCTAssertEqual(table.rowSpans[0][0], MarkdownTableAttachment.CellSpan(colspan: 2, rowspan: 2))
+        XCTAssertEqual(table.rowSpans[0][1], MarkdownTableAttachment.CellSpan(colspan: 0, rowspan: 1))
+
+        let grid = table.makeGridView()
+        XCTAssertEqual(grid.numberOfColumns, 3)
+        XCTAssertEqual(grid.numberOfRows, 3)
+        let head = grid.cell(atColumnIndex: 0, rowIndex: 1).contentView as? NSTextField
+        XCTAssertEqual(head?.attributedStringValue.string, "big")
+        XCTAssertGreaterThan(grid.fittingSize.width, 0)
+    }
+
+    // MARK: - Nested-block indent composition
+
+    /// The paragraph style at the first attachment character in `rendered`.
+    private func attachmentParagraphStyle(in rendered: NSAttributedString,
+                                          file: StaticString = #filePath, line: UInt = #line) -> NSParagraphStyle? {
+        let range = (rendered.string as NSString).range(of: "\u{FFFC}")
+        guard range.location != NSNotFound else {
+            XCTFail("no attachment found in \(rendered.string)", file: file, line: line)
+            return nil
+        }
+        return rendered.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+    }
+
+    func testTableInsideListItemIndentsWithTheList() {
+        let markdown = """
+        - item text
+
+          | A |
+          |---|
+          | 1 |
+        """
+        let rendered = MarkdownAttributed.render(markdown)
+        let ps = attachmentParagraphStyle(in: rendered)
+        XCTAssertEqual(ps?.headIndent, style.listIndent)
+        XCTAssertEqual(ps?.firstLineHeadIndent, style.listIndent)
+    }
+
+    func testTableInsideBlockQuoteIndentsWithTheQuote() {
+        let markdown = """
+        > | A |
+        > |---|
+        > | 1 |
+        """
+        let rendered = MarkdownAttributed.render(markdown)
+        let ps = attachmentParagraphStyle(in: rendered)
+        XCTAssertEqual(ps?.headIndent, style.quoteIndent)
+        XCTAssertEqual(ps?.firstLineHeadIndent, style.quoteIndent)
+    }
+
+    func testQuoteInsideListComposesIndents() {
+        let markdown = """
+        - item
+          > quoted in list
+        """
+        let ps = paragraphStyle(of: "quoted in list", in: MarkdownAttributed.render(markdown))
+        XCTAssertEqual(ps?.headIndent, style.quoteIndent + style.listIndent)
+    }
+
+    func testHTMLBlockInsideBlockQuoteIndents() {
+        let rendered = MarkdownAttributed.render("> <div>raw</div>")
+        let ps = paragraphStyle(of: "<div>raw</div>", in: rendered)
+        XCTAssertEqual(ps?.headIndent, style.quoteIndent)
+        XCTAssertEqual(attributes(of: "<div>raw</div>", in: rendered)[.foregroundColor] as? NSColor,
+                       style.secondaryTextColor)
+    }
+
+    // MARK: - Full-coverage kitchen sink
+
+    /// One document exercising every construct swift-markdown can parse
+    /// (symbol links, block directives, and Doxygen commands included when
+    /// parsed with the matching options).
+    private static let fullKitchenSink = #"""
+    # Kitchen Sink
+
+    Body with **bold**, *italic*, ~~strike~~, `code`, a [link](https://apple.com),
+    an autolink <https://swift.org>, inline <b>HTML</b>, an image ![image alt](nope.png),
+    a symbol link ``MyType/method(_:)``, and ^[attributed text](rainbow: extreme).
+    Hard break line one.\
+    Line two.
+
+    > Quoted paragraph.
+    > > Deeper quote.
+
+    - bullet one with a nested table:
+
+      | N |
+      |---|
+      | 1 |
+
+    - [x] done task
+    - [ ] pending task
+      - nested bullet
+
+    1. ordered one
+    2. ordered two
+
+    ```swift
+    let x = 1
+    ```
+
+    <div>
+      <p>html block</p>
+    </div>
+
+    ---
+
+    | Left | Center | Right |
+    |:-----|:------:|------:|
+    | a    | b      | c     |
+    | big         || small |
+    | ^           || small |
+
+    @Metadata {
+      Directive body paragraph.
+    }
+
+    \param coordinate The coordinate to travel to.
+
+    \returns A number.
+
+    \note Be careful.
+
+    \discussion Longer discussion text.
+
+    \abstract A short abstract.
+    """#
+
+    private static let allParseOptions: ParseOptions = [
+        .parseBlockDirectives, .parseSymbolLinks, .parseMinimalDoxygen,
+    ]
+
+    func testFullKitchenSinkSpotChecks() throws {
+        let rendered = renderWithOptions(Self.fullKitchenSink, options: Self.allParseOptions)
+        let text = rendered.string
+
+        // Headings and inline styles.
+        XCTAssertEqual(font(of: "Kitchen Sink", in: rendered)?.pointSize,
+                       style.headingFont(forLevel: 1).pointSize)
+        XCTAssertTrue(font(of: "bold", in: rendered)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false)
+        XCTAssertTrue(font(of: "italic", in: rendered)?.fontDescriptor.symbolicTraits.contains(.italic) ?? false)
+        XCTAssertNotNil(attributes(of: "strike", in: rendered)[.strikethroughStyle])
+        XCTAssertTrue(font(of: "code", in: rendered)?.isFixedPitch ?? false)
+
+        // Links, autolinks, symbol links, inline HTML, inline attributes, images.
+        XCTAssertEqual(attributes(of: "link", in: rendered)[.link] as? URL, URL(string: "https://apple.com"))
+        XCTAssertNotNil(attributes(of: "https://swift.org", in: rendered)[.link])
+        XCTAssertTrue(font(of: "MyType/method(_:)", in: rendered)?.isFixedPitch ?? false)
+        XCTAssertTrue(font(of: "<b>", in: rendered)?.isFixedPitch ?? false)
+        XCTAssertTrue(text.contains("attributed text"))
+        XCTAssertFalse(text.contains("rainbow"))
+        XCTAssertTrue(text.contains("image alt"), "unresolvable image should fall back to alt text")
+
+        // Breaks.
+        XCTAssertTrue(text.contains("Hard break line one.\u{2028}Line two."))
+
+        // Quotes, lists, tasks.
+        XCTAssertEqual(attributes(of: "Quoted paragraph.", in: rendered)[.markdownQuoteDepth] as? Int, 1)
+        XCTAssertEqual(attributes(of: "Deeper quote.", in: rendered)[.markdownQuoteDepth] as? Int, 2)
+        XCTAssertTrue(text.contains("\u{2611}\tdone task"))
+        XCTAssertTrue(text.contains("\u{2610}\tpending task"))
+        XCTAssertTrue(text.contains("\u{2022}\tnested bullet"))
+        XCTAssertTrue(text.contains("1.\tordered one"))
+
+        // Code, HTML block, thematic break.
+        XCTAssertEqual(font(of: "let x = 1", in: rendered), style.monospacedFont)
+        XCTAssertTrue(text.contains("<p>html block</p>"))
+        XCTAssertEqual(attributes(of: "<p>html block</p>", in: rendered)[.backgroundColor] as? NSColor,
+                       style.codeBackgroundColor)
+        XCTAssertTrue(text.contains("\u{2500}"))
+
+        // Tables: the one nested in the list plus the aligned/spanned one.
+        let tables = allTableAttachments(in: rendered)
+        XCTAssertEqual(tables.count, 2)
+        let aligned = try XCTUnwrap(tables.last)
+        XCTAssertEqual(aligned.columnAlignments, [.left, .center, .right])
+        XCTAssertEqual(aligned.rowSpans[1][0], MarkdownTableAttachment.CellSpan(colspan: 2, rowspan: 2))
+
+        // Directives and Doxygen.
+        XCTAssertTrue(text.contains("Directive body paragraph."))
+        XCTAssertFalse(text.contains("Metadata"))
+        XCTAssertTrue(text.contains("Parameter coordinate: The coordinate to travel to."))
+        XCTAssertTrue(text.contains("Returns: A number."))
+        XCTAssertTrue(text.contains("Note: Be careful."))
+        XCTAssertTrue(text.contains("Longer discussion text."))
+        XCTAssertTrue(text.contains("A short abstract."))
+    }
+
+    /// Guard rail against silent fallthroughs: every node type present in the
+    /// kitchen-sink tree (plus the programmatic-only custom nodes) must render
+    /// SOME output when visited on its own — a node type whose standalone
+    /// render is empty has fallen through the visitor unhandled.
+    func testGuardRailEveryNodeTypePresentProducesOutput() {
+        let parsed = Markdown.Document(parsing: Self.fullKitchenSink, options: Self.allParseOptions)
+        // CustomBlock/CustomInline exist only in programmatic trees — graft one of each in.
+        var blocks: [BlockMarkup] = Array(parsed.blockChildren)
+        blocks.append(CustomBlock(
+            [Paragraph(Markdown.Text("custom block, "), CustomInline("custom inline"))] as [BlockMarkup]
+        ))
+        let document = Markdown.Document(blocks)
+
+        var seenTypes: Set<String> = []
+        var emptyTypes: Set<String> = []
+        walk(document) { node in
+            let typeName = String(describing: type(of: node))
+            seenTypes.insert(typeName)
+            // Cells covered by a spanning neighbor are legitimately empty.
+            if let cell = node as? Markdown.Table.Cell, cell.colspan == 0 || cell.rowspan == 0 {
+                return
+            }
+            var renderer = AttributedRenderer(style: .default)
+            if renderer.visit(node).length == 0 {
+                emptyTypes.insert(typeName)
+            }
+        }
+        XCTAssertTrue(emptyTypes.isEmpty, "node types rendering no output: \(emptyTypes.sorted())")
+
+        // The kitchen sink itself must keep exercising the full node set —
+        // if parsing changes and a type drops out, this list flags it.
+        let expected: Set<String> = [
+            "Document", "Heading", "Paragraph", "BlockQuote", "CodeBlock", "HTMLBlock",
+            "ThematicBreak", "OrderedList", "UnorderedList", "ListItem", "BlockDirective",
+            "CustomBlock", "Table", "Head", "Body", "Row", "Cell",
+            "Text", "Emphasis", "Strong", "Strikethrough", "InlineCode", "InlineHTML",
+            "Image", "Link", "SymbolLink", "SoftBreak", "LineBreak", "InlineAttributes",
+            "CustomInline", "DoxygenParameter", "DoxygenReturns", "DoxygenNote",
+            "DoxygenDiscussion", "DoxygenAbstract",
+        ]
+        XCTAssertTrue(expected.isSubset(of: seenTypes),
+                      "kitchen sink no longer produces: \(expected.subtracting(seenTypes).sorted())")
     }
 }
