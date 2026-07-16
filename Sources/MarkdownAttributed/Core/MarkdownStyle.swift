@@ -57,6 +57,15 @@ public struct MarkdownStyle {
     /// (and indents them); drawing the bar itself is up to the host.
     public var quoteBarColor: NSColor
 
+    /// Stroke color for table chrome (outer border, row/column rules). `nil`
+    /// uses ``secondaryTextColor`` at 25% opacity — visible on light and dark
+    /// backgrounds without theming.
+    public var tableBorderColor: NSColor?
+
+    /// Optional fill behind a table's header row (GitHub tints it slightly).
+    /// `nil` (the default) draws no header background.
+    public var tableHeaderBackground: NSColor?
+
     // MARK: Spacing
 
     /// Vertical spacing after each block (paragraph, heading, list, code block).
@@ -94,6 +103,8 @@ public struct MarkdownStyle {
         linkColor: NSColor = .linkColor,
         codeBackgroundColor: NSColor = NSColor.labelColor.withAlphaComponent(0.07),
         quoteBarColor: NSColor = .separatorColor,
+        tableBorderColor: NSColor? = nil,
+        tableHeaderBackground: NSColor? = nil,
         paragraphSpacing: CGFloat = 8,
         listIndent: CGFloat = 24,
         quoteIndent: CGFloat = 16,
@@ -108,6 +119,8 @@ public struct MarkdownStyle {
         self.linkColor = linkColor
         self.codeBackgroundColor = codeBackgroundColor
         self.quoteBarColor = quoteBarColor
+        self.tableBorderColor = tableBorderColor
+        self.tableHeaderBackground = tableHeaderBackground
         self.paragraphSpacing = paragraphSpacing
         self.listIndent = listIndent
         self.quoteIndent = quoteIndent

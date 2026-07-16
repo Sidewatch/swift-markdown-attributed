@@ -386,7 +386,9 @@ struct AttributedRenderer: MarkupVisitor {
             rows: rows,
             columnAlignments: alignments,
             headerSpans: headerSpans,
-            rowSpans: rowSpans
+            rowSpans: rowSpans,
+            borderColor: style.tableBorderColor ?? style.secondaryTextColor.withAlphaComponent(0.25),
+            headerBackground: style.tableHeaderBackground
         )
         let (paragraphStyle, marker) = listAwareBlockStart()
         let content = NSMutableAttributedString()

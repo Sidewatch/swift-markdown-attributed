@@ -413,7 +413,8 @@ final class MarkdownAttributedTests: XCTestCase {
         )
         XCTAssertTrue(provider.tracksTextAttachmentViewBounds)
         provider.loadView()
-        let grid = try XCTUnwrap(provider.view as? NSGridView)
+        let container = try XCTUnwrap(provider.view as? MarkdownTableContainerView)
+        let grid = container.grid
         let firstCell = (grid.cell(atColumnIndex: 0, rowIndex: 0).contentView as? NSTextField)?
             .attributedStringValue.string
         XCTAssertEqual(firstCell, "Name")
@@ -857,5 +858,34 @@ final class MarkdownAttributedTests: XCTestCase {
         ]
         XCTAssertTrue(expected.isSubset(of: seenTypes),
                       "kitchen sink no longer produces: \(expected.subtracting(seenTypes).sorted())")
+    }
+}
+
+extension MarkdownAttributedTests {
+    /// Tables render inside a chrome-drawing container that carries the style's
+    /// border color and hosts the grid — the fix for "structured but borderless".
+    func testTableRendersInsideBorderedContainer() throws {
+        var style = MarkdownStyle.default
+        style.tableBorderColor = .systemRed
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |"
+        let rendered = MarkdownAttributed.render(md, style: style)
+        var attachment: MarkdownTableAttachment?
+        rendered.enumerateAttribute(.attachment, in: NSRange(location: 0, length: rendered.length)) { v, _, stop in
+            if let t = v as? MarkdownTableAttachment { attachment = t; stop.pointee = true }
+        }
+        let table = try XCTUnwrap(attachment)
+        XCTAssertEqual(table.borderColor, .systemRed)
+        let contentStorage = NSTextContentStorage()
+        let layoutManager = NSTextLayoutManager()
+        contentStorage.addTextLayoutManager(layoutManager)
+        contentStorage.textStorage?.setAttributedString(rendered)
+        let provider = try XCTUnwrap(table.viewProvider(for: nil, location: layoutManager.documentRange.location, textContainer: nil) as? MarkdownTableViewProvider)
+        provider.loadView()
+        let container = try XCTUnwrap(provider.view as? MarkdownTableContainerView)
+        XCTAssertTrue(container.subviews.contains(container.grid))
+        // Refit to two widths: the grid must stay hosted and sized within budget.
+        table.fit(grid: container.grid, to: 300 - MarkdownTableContainerView.padding.width * 2)
+        table.fit(grid: container.grid, to: 600 - MarkdownTableContainerView.padding.width * 2)
+        XCTAssertTrue(container.subviews.contains(container.grid))
     }
 }
