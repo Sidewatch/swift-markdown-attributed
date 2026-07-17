@@ -175,28 +175,62 @@ public final class MarkdownTableAttachment: NSTextAttachment {
         let columnCount = grid.numberOfColumns
         guard maxWidth > 0, columnCount > 0, grid.numberOfRows > 0 else { return }
 
-        // Natural (single-line) width of every column: widest cell label wins.
-        // Wrapping labels from a previous fit measure at their allotted width,
-        // so reset to single-line first — this keeps the pass idempotent and
-        // lets columns grow back when the pane widens.
-        var natural = [CGFloat](repeating: 0, count: columnCount)
-        func forEachLabel(_ body: (Int, NSTextField) -> Void) {
+        // Enumerate every label ONCE, with the column span it covers.
+        // `NSGridView` returns a merged cell's HEAD label for every covered
+        // position, so a naive per-position sweep counts a colspan-N label N
+        // times: its full width max'd into EVERY spanned column (spuriously
+        // triggering the overflow path and starving the other columns), then
+        // the wrap pass clamping it to a single column's allotment.
+        struct Entry { let label: NSTextField; let column: Int; var span: Int }
+        var entries: [Entry] = []
+        var entryIndex: [ObjectIdentifier: Int] = [:]
+        for row in 0..<grid.numberOfRows {
             for column in 0..<columnCount {
-                for row in 0..<grid.numberOfRows {
-                    guard let label = grid.cell(atColumnIndex: column, rowIndex: row).contentView as? NSTextField else { continue }
-                    body(column, label)
+                guard let label = grid.cell(atColumnIndex: column, rowIndex: row).contentView as? NSTextField else { continue }
+                let id = ObjectIdentifier(label)
+                if let i = entryIndex[id] {
+                    // Seen again: a covered position. Extend the colspan when it
+                    // reaches further right (rowspan repeats keep the span as-is).
+                    entries[i].span = max(entries[i].span, column - entries[i].column + 1)
+                    continue
                 }
+                entryIndex[id] = entries.count
+                entries.append(Entry(label: label, column: column, span: 1))
             }
         }
-        forEachLabel { _, label in
-            label.lineBreakMode = .byClipping
-            label.usesSingleLineMode = false
-            label.cell?.wraps = false
-            label.maximumNumberOfLines = 1
-            label.preferredMaxLayoutWidth = 0
+        /// The columns `entry` covers, clamped to the grid.
+        func columns(of entry: Entry) -> Range<Int> {
+            entry.column..<min(entry.column + entry.span, columnCount)
         }
-        forEachLabel { column, label in
-            natural[column] = max(natural[column], ceil(label.fittingSize.width))
+
+        // Reset to single-line first — wrapping labels from a previous fit
+        // measure at their allotted width, so this keeps the pass idempotent
+        // and lets columns grow back when the pane widens.
+        for entry in entries {
+            entry.label.lineBreakMode = .byClipping
+            entry.label.usesSingleLineMode = false
+            entry.label.cell?.wraps = false
+            entry.label.maximumNumberOfLines = 1
+            entry.label.preferredMaxLayoutWidth = 0
+        }
+
+        // Natural (single-line) width of every column: widest single-column
+        // label wins. A spanning label then widens its columns only by the
+        // deficit its combined columns (plus the spacing it bridges) can't
+        // already hold, split evenly — never its full width per column.
+        var natural = [CGFloat](repeating: 0, count: columnCount)
+        for entry in entries where entry.span == 1 {
+            natural[entry.column] = max(natural[entry.column], ceil(entry.label.fittingSize.width))
+        }
+        for entry in entries where entry.span > 1 {
+            let cols = columns(of: entry)
+            let bridged = grid.columnSpacing * CGFloat(cols.count - 1)
+            let have = cols.reduce(0) { $0 + natural[$1] } + bridged
+            let need = ceil(entry.label.fittingSize.width)
+            if need > have {
+                let extra = (need - have) / CGFloat(cols.count)
+                for c in cols { natural[c] += extra }
+            }
         }
 
         let spacing = grid.columnSpacing * CGFloat(max(0, columnCount - 1))
@@ -225,14 +259,19 @@ public final class MarkdownTableAttachment: NSTextAttachment {
             }
         }
 
-        // Wrap the shrunk columns' labels at their allotted width.
-        forEachLabel { column, label in
-            guard allotted[column] < natural[column] else { return }
-            label.lineBreakMode = .byWordWrapping
-            label.usesSingleLineMode = false
-            label.cell?.wraps = true
-            label.maximumNumberOfLines = 0
-            label.preferredMaxLayoutWidth = floor(allotted[column])
+        // Wrap the shrunk labels at their allotted width — a spanning label at
+        // the SUM of its columns' allotments plus the spacing it bridges.
+        for entry in entries {
+            let cols = columns(of: entry)
+            let bridged = grid.columnSpacing * CGFloat(cols.count - 1)
+            let allottedWidth = cols.reduce(0) { $0 + allotted[$1] } + bridged
+            let naturalWidth = cols.reduce(0) { $0 + natural[$1] } + bridged
+            guard allottedWidth < naturalWidth else { continue }
+            entry.label.lineBreakMode = .byWordWrapping
+            entry.label.usesSingleLineMode = false
+            entry.label.cell?.wraps = true
+            entry.label.maximumNumberOfLines = 0
+            entry.label.preferredMaxLayoutWidth = floor(allottedWidth)
         }
     }
 
@@ -352,14 +391,32 @@ final class MarkdownTableContainerView: NSView {
 
     /// Per-row vertical extents and per-column horizontal extents of the
     /// grid's visible cells, in this view's (flipped) coordinates.
+    ///
+    /// `NSGridView` returns a merged (span) cell's HEAD `contentView` for every
+    /// grid position the merge covers, so each view's frame is attributed only
+    /// to its head row/column — folding a rowspan cell's frame into every row
+    /// it spans would drag that row's extents across the span and the midpoint
+    /// rules in `draw(_:)` would slice through neighboring cells' text. A row
+    /// or column consisting entirely of covered cells contributes no extents
+    /// entry, which is exactly right: no rule should cross the merged cell.
     private func cellExtents() -> (rows: [(minY: CGFloat, maxY: CGFloat)], cols: [(minX: CGFloat, maxX: CGFloat)]) {
+        var headRow = [ObjectIdentifier: Int]()
+        var headCol = [ObjectIdentifier: Int]()
+        for r in 0..<grid.numberOfRows {
+            for c in 0..<grid.numberOfColumns {
+                guard let v = grid.cell(atColumnIndex: c, rowIndex: r).contentView else { continue }
+                let id = ObjectIdentifier(v)
+                if headRow[id] == nil { headRow[id] = r }
+                if headCol[id] == nil { headCol[id] = c }
+            }
+        }
         var rows = [(minY: CGFloat, maxY: CGFloat)]()
         var cols = [(minX: CGFloat, maxX: CGFloat)]()
         for r in 0..<grid.numberOfRows {
             var lo = CGFloat.greatestFiniteMagnitude, hi = -CGFloat.greatestFiniteMagnitude
             for c in 0..<grid.numberOfColumns {
                 guard let v = grid.cell(atColumnIndex: c, rowIndex: r).contentView,
-                      v.frame.height > 0.5 else { continue }
+                      v.frame.height > 0.5, headRow[ObjectIdentifier(v)] == r else { continue }
                 let f = v.superview?.convert(v.frame, to: self) ?? .zero
                 lo = min(lo, f.minY); hi = max(hi, f.maxY)
             }
@@ -369,7 +426,7 @@ final class MarkdownTableContainerView: NSView {
             var lo = CGFloat.greatestFiniteMagnitude, hi = -CGFloat.greatestFiniteMagnitude
             for r in 0..<grid.numberOfRows {
                 guard let v = grid.cell(atColumnIndex: c, rowIndex: r).contentView,
-                      v.frame.width > 0.5 else { continue }
+                      v.frame.width > 0.5, headCol[ObjectIdentifier(v)] == c else { continue }
                 let f = v.superview?.convert(v.frame, to: self) ?? .zero
                 lo = min(lo, f.minX); hi = max(hi, f.maxX)
             }
