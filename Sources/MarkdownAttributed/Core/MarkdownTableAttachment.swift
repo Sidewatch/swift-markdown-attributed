@@ -160,6 +160,30 @@ public final class MarkdownTableAttachment: NSTextAttachment {
         return grid
     }
 
+    /// Rasterizes the table (grid + border chrome) to an image at `maxWidth`, for
+    /// hosts that can't show the view-based attachment: **TextKit 1** renders
+    /// `viewProvider` as a blank glyph, so a TK1 text view sets this image as the
+    /// attachment's `image`. Call once the surface width is known; re-call on a width
+    /// or theme change. Returns nil if there's no room to lay the table out.
+    public func renderImage(maxWidth: CGFloat) -> NSImage? {
+        let inner = maxWidth - MarkdownTableContainerView.padding.width * 2
+        guard inner > 20 else { return nil }
+        let grid = makeGridView()
+        fit(grid: grid, to: inner)
+        let container = MarkdownTableContainerView(grid: grid, borderColor: borderColor,
+                                                   headerBackground: headerBackground,
+                                                   hasHeader: !headerCells.isEmpty)
+        let size = container.fittingSize
+        guard size.width > 1, size.height > 1 else { return nil }
+        container.frame = NSRect(origin: .zero, size: size)
+        container.layoutSubtreeIfNeeded()   // border pass reads live cell geometry
+        guard let rep = container.bitmapImageRepForCachingDisplay(in: container.bounds) else { return nil }
+        container.cacheDisplay(in: container.bounds, to: rep)
+        let image = NSImage(size: size)
+        image.addRepresentation(rep)
+        return image
+    }
+
     /// Fits `grid` (built by ``makeGridView()``) into `maxWidth` points.
     ///
     /// The hosting text surface has no horizontal scroller, so a table wider
