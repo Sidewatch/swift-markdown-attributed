@@ -174,6 +174,10 @@ struct AttributedRenderer: MarkupVisitor {
     mutating func visitParagraph(_ paragraph: Paragraph) -> NSAttributedString {
         let content = join(paragraph)
         let (paragraphStyle, marker) = listAwareBlockStart()
+        // An image-bearing paragraph would otherwise get 50% of the (tall) image's
+        // height as blank leading from the prose line-height multiple — an attachment's
+        // line height scales with the attachment. Reset it (same trap as tables).
+        if content.mdContainsAttachment { paragraphStyle.lineHeightMultiple = 1 }
         let result = NSMutableAttributedString()
         if let marker { result.append(marker) }
         result.append(content)
@@ -185,6 +189,9 @@ struct AttributedRenderer: MarkupVisitor {
         currentFont = style.headingFont(forLevel: heading.level)
         let content = join(heading)
         currentFont = saved
+        // Tag the text so a host layout pass can draw the H1/H2 bottom hairline.
+        content.addAttribute(.markdownHeadingLevel, value: heading.level,
+                             range: NSRange(location: 0, length: content.length))
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
@@ -254,9 +261,11 @@ struct AttributedRenderer: MarkupVisitor {
     }
 
     mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) -> NSAttributedString {
+        // A blank marker line; the host layout pass draws the full-width rule (see
+        // `markdownThematicBreak`). With no host drawer it renders as empty space.
         let rule = NSMutableAttributedString(
-            string: String(repeating: "\u{2500}", count: 24),
-            attributes: [.font: style.bodyFont, .foregroundColor: style.secondaryTextColor]
+            string: " ",
+            attributes: [.font: style.bodyFont, .markdownThematicBreak: true]
         )
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
@@ -431,6 +440,7 @@ struct AttributedRenderer: MarkupVisitor {
         let mono = style.monospacedFont
         attributes[.font] = NSFont(descriptor: mono.fontDescriptor, size: currentFont.pointSize) ?? mono
         attributes[.backgroundColor] = style.codeBackgroundColor
+        attributes[.markdownInlineCode] = true   // host draws the rounded pill over the tint
         return attributes
     }
 
@@ -517,6 +527,19 @@ struct AttributedRenderer: MarkupVisitor {
             return URL(fileURLWithPath: source, relativeTo: base).absoluteURL
         }
         return nil
+    }
+}
+
+private extension NSAttributedString {
+    /// True when any range carries a text attachment (an image or a table block) —
+    /// used to drop the prose line-height multiple, which would otherwise pad an
+    /// attachment by half its (potentially tall) height.
+    var mdContainsAttachment: Bool {
+        var found = false
+        enumerateAttribute(.attachment, in: NSRange(location: 0, length: length), options: []) { value, _, stop in
+            if value != nil { found = true; stop.pointee = true }
+        }
+        return found
     }
 }
 

@@ -340,9 +340,18 @@ final class MarkdownAttributedTests: XCTestCase {
 
     func testThematicBreak() {
         let rendered = MarkdownAttributed.render("above\n\n---\n\nbelow")
-        XCTAssertTrue(rendered.string.contains("\u{2500}\u{2500}\u{2500}"))
-        XCTAssertEqual(attributes(of: "\u{2500}", in: rendered)[.foregroundColor] as? NSColor,
-                       style.secondaryTextColor)
+        // The break is a blank marker line carrying `.markdownThematicBreak` — the host
+        // draws the full-width rule; the attributed string has no rule glyphs of its own.
+        XCTAssertTrue(hasThematicBreak(rendered))
+    }
+
+    /// True if any range of `s` is tagged as a thematic break.
+    private func hasThematicBreak(_ s: NSAttributedString) -> Bool {
+        var found = false
+        s.enumerateAttribute(.markdownThematicBreak, in: NSRange(location: 0, length: s.length)) { value, _, stop in
+            if value != nil { found = true; stop.pointee = true }
+        }
+        return found
     }
 
     // MARK: - Tables
@@ -797,7 +806,7 @@ final class MarkdownAttributedTests: XCTestCase {
         XCTAssertTrue(text.contains("<p>html block</p>"))
         XCTAssertEqual(attributes(of: "<p>html block</p>", in: rendered)[.backgroundColor] as? NSColor,
                        style.codeBackgroundColor)
-        XCTAssertTrue(text.contains("\u{2500}"))
+        XCTAssertTrue(hasThematicBreak(rendered))
 
         // Tables: the one nested in the list plus the aligned/spanned one.
         let tables = allTableAttachments(in: rendered)

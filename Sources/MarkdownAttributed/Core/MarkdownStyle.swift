@@ -163,4 +163,18 @@ public extension NSAttributedString.Key {
     /// background behind it (GitHub-style) rather than the ragged per-glyph tint the
     /// attributed `.backgroundColor` gives on its own.
     static let markdownCodeBlock = NSAttributedString.Key("MarkdownAttributed.codeBlock")
+
+    /// Present (as the heading's `Int` level, 1…6) on a heading's text range, so a
+    /// host layout pass can draw a GitHub-style bottom hairline under H1/H2.
+    static let markdownHeadingLevel = NSAttributedString.Key("MarkdownAttributed.headingLevel")
+
+    /// Present (as `true`) on inline-code / inline-HTML / symbol-link ranges, so a
+    /// host layout pass can draw a rounded, padded "pill" behind them (GitHub-style)
+    /// instead of relying on the ragged per-glyph `.backgroundColor` tint alone.
+    static let markdownInlineCode = NSAttributedString.Key("MarkdownAttributed.inlineCode")
+
+    /// Present (as `true`) on a thematic break's (otherwise blank) line, so a host
+    /// layout pass can draw a full-width horizontal rule. Without a host drawer the
+    /// break renders as empty space.
+    static let markdownThematicBreak = NSAttributedString.Key("MarkdownAttributed.thematicBreak")
 }
