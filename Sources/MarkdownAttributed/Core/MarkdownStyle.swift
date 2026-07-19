@@ -157,4 +157,10 @@ public extension NSAttributedString.Key {
     /// inside a block quote, so a host layout pass can draw quote bars in
     /// ``MarkdownStyle/quoteBarColor`` alongside the indented text.
     static let markdownQuoteDepth = NSAttributedString.Key("MarkdownAttributed.quoteDepth")
+
+    /// Present (as `true`) on every range that is a fenced/indented code block or
+    /// raw-HTML block, so a host layout pass can draw a full-width, padded, rounded
+    /// background behind it (GitHub-style) rather than the ragged per-glyph tint the
+    /// attributed `.backgroundColor` gives on its own.
+    static let markdownCodeBlock = NSAttributedString.Key("MarkdownAttributed.codeBlock")
 }

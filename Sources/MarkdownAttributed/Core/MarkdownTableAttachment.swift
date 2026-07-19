@@ -142,10 +142,12 @@ public final class MarkdownTableAttachment: NSTextAttachment {
 
         let grid = NSGridView(views: rowViews)
         grid.translatesAutoresizingMaskIntoConstraints = false
-        grid.rowSpacing = 4
-        grid.columnSpacing = 16
+        // Rules are drawn at the midpoint of the gap, so cell padding ≈ spacing/2.
+        // GitHub uses ~6px vertical / ~13px horizontal — so ~12 / ~26 here.
+        grid.rowSpacing = 12
+        grid.columnSpacing = 26
         if !headerCells.isEmpty, grid.numberOfRows > 0 {
-            grid.row(at: 0).bottomPadding = 4
+            grid.row(at: 0).bottomPadding = 6
         }
         for column in 0..<grid.numberOfColumns where column < columnAlignments.count {
             switch columnAlignments[column] {
@@ -361,7 +363,7 @@ final class MarkdownTableContainerView: NSView {
     private let hasHeader: Bool
 
     /// Breathing room between the border strokes and the grid's cells.
-    static let padding = NSSize(width: 10, height: 6)
+    static let padding = NSSize(width: 13, height: 8)
 
     /// Top-left origin coordinates keep the header math orientation-stable.
     override var isFlipped: Bool { true }

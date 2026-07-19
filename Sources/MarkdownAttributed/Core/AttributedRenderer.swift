@@ -221,11 +221,9 @@ struct AttributedRenderer: MarkupVisitor {
                 .foregroundColor: quoteDepth > 0 ? style.secondaryTextColor : style.textColor,
             ])
         }
-        content.addAttribute(
-            .backgroundColor,
-            value: style.codeBackgroundColor,
-            range: NSRange(location: 0, length: content.length)
-        )
+        let full = NSRange(location: 0, length: content.length)
+        content.addAttribute(.backgroundColor, value: style.codeBackgroundColor, range: full)
+        content.addAttribute(.markdownCodeBlock, value: true, range: full)   // host draws the padded box
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
