@@ -188,7 +188,11 @@ struct AttributedRenderer: MarkupVisitor {
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
-        paragraphStyle.paragraphSpacingBefore = style.paragraphSpacing
+        // GitHub gives a heading more room above than below; adding half the block
+        // spacing before (on top of the previous block's trailing spacing) reads as
+        // that extra separation. Headings sit tighter internally (1.2).
+        paragraphStyle.paragraphSpacingBefore = style.paragraphSpacing * 0.5
+        paragraphStyle.lineHeightMultiple = 1.2
         let quoteBase = CGFloat(quoteDepth) * style.quoteIndent
         paragraphStyle.firstLineHeadIndent = quoteBase
         paragraphStyle.headIndent = quoteBase
@@ -225,6 +229,7 @@ struct AttributedRenderer: MarkupVisitor {
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
+        paragraphStyle.lineHeightMultiple = 1.4   // GitHub code line-height ~1.45
         let base = CGFloat(quoteDepth) * style.quoteIndent + CGFloat(listDepth) * style.listIndent
         paragraphStyle.firstLineHeadIndent = base
         paragraphStyle.headIndent = base
@@ -438,6 +443,7 @@ struct AttributedRenderer: MarkupVisitor {
     private mutating func listAwareBlockStart() -> (paragraphStyle: NSMutableParagraphStyle, marker: NSAttributedString?) {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
+        paragraphStyle.lineHeightMultiple = style.lineHeightMultiple   // GitHub-airy prose
         let quoteBase = CGFloat(quoteDepth) * style.quoteIndent
         var marker: NSAttributedString?
         if listDepth > 0 {

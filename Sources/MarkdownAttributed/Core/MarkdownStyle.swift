@@ -71,6 +71,11 @@ public struct MarkdownStyle {
     /// Vertical spacing after each block (paragraph, heading, list, code block).
     public var paragraphSpacing: CGFloat
 
+    /// Line-height multiple for body prose (GitHub uses 1.5 — the airy spacing is a
+    /// big part of the "reads like a rendered README" feel). Headings and code blocks
+    /// apply their own tighter multiples internally.
+    public var lineHeightMultiple: CGFloat
+
     /// Horizontal indent added per list-nesting level; also the hanging indent
     /// that aligns wrapped list lines past their marker.
     public var listIndent: CGFloat
@@ -96,7 +101,7 @@ public struct MarkdownStyle {
     /// only the knobs you want to change (or mutate a copy of ``default``).
     public init(
         bodyFont: NSFont = .systemFont(ofSize: 13),
-        headingFont: NSFont = .boldSystemFont(ofSize: 26),
+        headingFont: NSFont = .systemFont(ofSize: 26, weight: .semibold),
         monospacedFont: NSFont = .monospacedSystemFont(ofSize: 12, weight: .regular),
         textColor: NSColor = .labelColor,
         secondaryTextColor: NSColor = .secondaryLabelColor,
@@ -105,8 +110,9 @@ public struct MarkdownStyle {
         quoteBarColor: NSColor = .separatorColor,
         tableBorderColor: NSColor? = nil,
         tableHeaderBackground: NSColor? = nil,
-        paragraphSpacing: CGFloat = 8,
-        listIndent: CGFloat = 24,
+        paragraphSpacing: CGFloat = 14,
+        lineHeightMultiple: CGFloat = 1.5,
+        listIndent: CGFloat = 28,
         quoteIndent: CGFloat = 16,
         codeFormatter: ((_ code: String, _ language: String?) -> NSAttributedString)? = nil,
         baseURL: URL? = nil
@@ -122,22 +128,27 @@ public struct MarkdownStyle {
         self.tableBorderColor = tableBorderColor
         self.tableHeaderBackground = tableHeaderBackground
         self.paragraphSpacing = paragraphSpacing
+        self.lineHeightMultiple = lineHeightMultiple
         self.listIndent = listIndent
         self.quoteIndent = quoteIndent
         self.codeFormatter = codeFormatter
         self.baseURL = baseURL
     }
 
-    /// The stock style: system fonts, semantic AppKit colors, 8pt block spacing.
+    /// The stock style: system fonts, semantic AppKit colors, GitHub-like spacing
+    /// (1.5 line-height, 14pt block spacing, body-relative heading sizes).
     public static let `default` = MarkdownStyle()
 
-    /// The font for a heading of `level` (1…6): ``headingFont``'s descriptor at
-    /// a per-level scale of its point size (H1 = 1.0 down to H6 = 0.45).
+    /// The font for a heading of `level` (1…6). Sizes follow GitHub's scale, taken
+    /// **relative to the body size** (H1 = 2em, H2 = 1.5em, H3 = 1.25em, H4 = 1em,
+    /// H5 = 0.875em, H6 = 0.85em), rendered in ``headingFont``'s family/weight (its
+    /// own point size is ignored — only the descriptor's traits carry over).
     public func headingFont(forLevel level: Int) -> NSFont {
-        let scales: [CGFloat] = [1.0, 0.8, 0.65, 0.55, 0.5, 0.45]
+        let scales: [CGFloat] = [2.0, 1.5, 1.25, 1.0, 0.875, 0.85]
         let scale = scales[max(1, min(6, level)) - 1]
-        let size = (headingFont.pointSize * scale).rounded()
-        return NSFont(descriptor: headingFont.fontDescriptor, size: size) ?? headingFont
+        let size = (bodyFont.pointSize * scale).rounded()
+        return NSFont(descriptor: headingFont.fontDescriptor, size: size)
+            ?? .systemFont(ofSize: size, weight: .semibold)
     }
 }
 
