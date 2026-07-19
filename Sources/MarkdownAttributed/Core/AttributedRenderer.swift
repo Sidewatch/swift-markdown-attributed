@@ -227,7 +227,7 @@ struct AttributedRenderer: MarkupVisitor {
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = style.paragraphSpacing
-        paragraphStyle.lineHeightMultiple = 1.4   // GitHub code line-height ~1.45
+        paragraphStyle.lineHeightMultiple = 1.3   // tighter than prose — code reads denser
         let base = CGFloat(quoteDepth) * style.quoteIndent + CGFloat(listDepth) * style.listIndent
         paragraphStyle.firstLineHeadIndent = base
         paragraphStyle.headIndent = base
@@ -394,6 +394,10 @@ struct AttributedRenderer: MarkupVisitor {
             headerBackground: style.tableHeaderBackground
         )
         let (paragraphStyle, marker) = listAwareBlockStart()
+        // The prose line-height multiple (1.5) would add 50% of the TABLE's height as
+        // blank space above/below it — an attachment's line height scales with the
+        // attachment. Reset it: the table brings its own internal padding.
+        paragraphStyle.lineHeightMultiple = 1
         let content = NSMutableAttributedString()
         if let marker { content.append(marker) }
         content.append(NSAttributedString(attachment: attachment))
