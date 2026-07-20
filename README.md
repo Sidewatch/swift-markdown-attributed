@@ -27,7 +27,7 @@ A Markdown → `NSAttributedString` renderer built on Apple's [swift-markdown](h
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/arraypress/swift-markdown-attributed.git", branch: "main")
+    .package(url: "https://github.com/Sidewatch/swift-markdown-attributed.git", branch: "main")
 ]
 ```
 
