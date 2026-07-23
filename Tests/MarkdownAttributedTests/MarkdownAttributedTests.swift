@@ -270,6 +270,38 @@ final class MarkdownAttributedTests: XCTestCase {
         XCTAssertEqual(ps?.firstLineHeadIndent, style.quoteIndent)
     }
 
+    func testListItemOpeningWithCodeFenceKeepsItsBullet() {
+        let rendered = MarkdownAttributed.render("- ```\n  code here\n  ```\n  after text")
+        XCTAssertTrue(rendered.string.contains("\u{2022}\tcode here"))
+        XCTAssertFalse(rendered.string.contains("\u{2022}\tafter text"))
+    }
+
+    func testFenceOnlyListItemDoesNotEmitTrailingBulletRow() {
+        let rendered = MarkdownAttributed.render("- ```\n  only code\n  ```\n- second item")
+        XCTAssertEqual(rendered.string, "\u{2022}\tonly code\n\u{2022}\tsecond item")
+    }
+
+    func testListItemOpeningWithHTMLBlockKeepsItsBullet() {
+        let rendered = MarkdownAttributed.render("- <div>x</div>")
+        XCTAssertTrue(rendered.string.contains("\u{2022}\t<div>x</div>"))
+    }
+
+    func testEmptyListItem() {
+        let rendered = MarkdownAttributed.render("- a\n-\n- b")
+        XCTAssertEqual(rendered.string, "\u{2022}\ta\n\u{2022}\t\n\u{2022}\tb")
+    }
+
+    func testEmptyListItemHoldingOnlyANestedListKeepsItsRow() {
+        let rendered = MarkdownAttributed.render("- parent text\n-\n  - sub item")
+        XCTAssertEqual(rendered.string, "\u{2022}\tparent text\n\u{2022}\t\n\u{2022}\tsub item")
+        // The flushed parent row sits at the parent's depth, not the sub-item's.
+        let rows = rendered.string.components(separatedBy: "\n")
+        XCTAssertEqual(rows.count, 3)
+        let emptyRowStart = (rendered.string as NSString).range(of: "\u{2022}\t\n").location
+        let ps = rendered.attributes(at: emptyRowStart, effectiveRange: nil)[.paragraphStyle] as? NSParagraphStyle
+        XCTAssertEqual(ps?.firstLineHeadIndent, 0)
+    }
+
     // MARK: - Links
 
     func testLinkAttributeAndColor() {

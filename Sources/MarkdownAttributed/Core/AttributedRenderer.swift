@@ -232,13 +232,12 @@ struct AttributedRenderer: MarkupVisitor {
         content.addAttribute(.backgroundColor, value: style.codeBackgroundColor, range: full)
         content.addAttribute(.markdownCodeBlock, value: true, range: full)   // host draws the padded box
 
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.paragraphSpacing = style.paragraphSpacing
+        let (paragraphStyle, marker) = listAwareBlockStart()
         paragraphStyle.lineHeightMultiple = 1.3   // tighter than prose — code reads denser
-        let base = CGFloat(quoteDepth) * style.quoteIndent + CGFloat(listDepth) * style.listIndent
-        paragraphStyle.firstLineHeadIndent = base
-        paragraphStyle.headIndent = base
-        return finishBlock(content, paragraphStyle: paragraphStyle)
+        let result = NSMutableAttributedString()
+        if let marker { result.append(marker) }
+        result.append(content)
+        return finishBlock(result, paragraphStyle: paragraphStyle)
     }
 
     /// A raw HTML block renders verbatim, styled like a code block (monospaced
@@ -252,12 +251,12 @@ struct AttributedRenderer: MarkupVisitor {
                 .backgroundColor: style.codeBackgroundColor,
             ]
         )
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.paragraphSpacing = style.paragraphSpacing
-        let base = CGFloat(quoteDepth) * style.quoteIndent + CGFloat(listDepth) * style.listIndent
-        paragraphStyle.firstLineHeadIndent = base
-        paragraphStyle.headIndent = base
-        return finishBlock(content, paragraphStyle: paragraphStyle)
+        let (paragraphStyle, marker) = listAwareBlockStart()
+        paragraphStyle.lineHeightMultiple = 0
+        let result = NSMutableAttributedString()
+        if let marker { result.append(marker) }
+        result.append(content)
+        return finishBlock(result, paragraphStyle: paragraphStyle)
     }
 
     mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) -> NSAttributedString {
@@ -309,17 +308,30 @@ struct AttributedRenderer: MarkupVisitor {
     // MARK: - Lists
 
     mutating func visitUnorderedList(_ list: UnorderedList) -> NSAttributedString {
+        // A marker still pending here belongs to a parent item whose first child
+        // is this nested list — flush its row first or the parent item's own
+        // visitListItem finds the marker gone (the sub-item consumed a fresh one)
+        // and the parent row vanishes.
+        let parentRow = flushPendingMarkerRow()
         listDepth += 1
         let result = join(list)
         listDepth -= 1
-        return result
+        guard let parentRow else { return result }
+        let combined = NSMutableAttributedString(attributedString: parentRow)
+        combined.append(result)
+        return combined
     }
 
     mutating func visitOrderedList(_ list: OrderedList) -> NSAttributedString {
+        // Same parent-marker flush as visitUnorderedList.
+        let parentRow = flushPendingMarkerRow()
         listDepth += 1
         let result = join(list)
         listDepth -= 1
-        return result
+        guard let parentRow else { return result }
+        let combined = NSMutableAttributedString(attributedString: parentRow)
+        combined.append(result)
+        return combined
     }
 
     /// Stages the item's marker (bullet / number / checkbox) for its first
@@ -342,15 +354,23 @@ struct AttributedRenderer: MarkupVisitor {
 
         // An empty item ("- " with no text) never had a paragraph to consume
         // the marker — emit the marker on its own line so the row still shows.
-        if let marker = pendingListMarker {
-            pendingListMarker = nil
-            let paragraphStyle = NSMutableParagraphStyle()
-            paragraphStyle.paragraphSpacing = style.paragraphSpacing
-            paragraphStyle.firstLineHeadIndent =
-                CGFloat(quoteDepth) * style.quoteIndent + CGFloat(listDepth - 1) * style.listIndent
-            content.append(finishBlock(NSMutableAttributedString(attributedString: marker), paragraphStyle: paragraphStyle))
+        if let row = flushPendingMarkerRow() {
+            content.append(row)
         }
         return content
+    }
+
+    /// Emits a still-pending marker as its own row: the empty-item fallback, and
+    /// the parent row of an item whose first child is a nested list. `listDepth`
+    /// must be the marker's own item depth when this is called.
+    private mutating func flushPendingMarkerRow() -> NSAttributedString? {
+        guard let marker = pendingListMarker else { return nil }
+        pendingListMarker = nil
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.paragraphSpacing = style.paragraphSpacing
+        paragraphStyle.firstLineHeadIndent =
+            CGFloat(quoteDepth) * style.quoteIndent + CGFloat(listDepth - 1) * style.listIndent
+        return finishBlock(NSMutableAttributedString(attributedString: marker), paragraphStyle: paragraphStyle)
     }
 
     // MARK: - Tables
