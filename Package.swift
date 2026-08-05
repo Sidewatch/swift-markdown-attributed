@@ -16,7 +16,8 @@ let package = Package(
         .target(
             name: "MarkdownAttributed",
             dependencies: [.product(name: "Markdown", package: "swift-markdown")],
-            path: "Sources"
+            path: "Sources",
+            swiftSettings: [.unsafeFlags(["-strict-concurrency=complete"])]
         ),
         .testTarget(
             name: "MarkdownAttributedTests",
