@@ -10,6 +10,9 @@ import Markdown
 import XCTest
 @testable import MarkdownAttributed
 
+// `@MainActor`: these build and measure AppKit views (grid fitting, table rasterization),
+// which is main-thread-only. XCTest already runs test methods on main.
+@MainActor
 final class MarkdownAttributedTests: XCTestCase {
 
     private let style = MarkdownStyle.default

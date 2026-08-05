@@ -137,7 +137,12 @@ public struct MarkdownStyle {
 
     /// The stock style: system fonts, semantic AppKit colors, GitHub-like spacing
     /// (1.5 line-height, 14pt block spacing, body-relative heading sizes).
-    public static let `default` = MarkdownStyle()
+    ///
+    /// `nonisolated(unsafe)` rather than making `MarkdownStyle` `Sendable`: it stores `NSFont`
+    /// and `NSColor` values, which AppKit does not declare `Sendable`, so the conformance would
+    /// be a claim about AppKit that is not ours to make. This value is a `let` built once from
+    /// stock system fonts and colors and never mutated, which is the part that is actually safe.
+    public nonisolated(unsafe) static let `default` = MarkdownStyle()
 
     /// The font for a heading of `level` (1…6). Sizes follow GitHub's scale, taken
     /// **relative to the body size** (H1 = 2em, H2 = 1.5em, H3 = 1.25em, H4 = 1em,

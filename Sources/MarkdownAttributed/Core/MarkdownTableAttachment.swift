@@ -122,6 +122,10 @@ public final class MarkdownTableAttachment: NSTextAttachment {
     /// Builds the `NSGridView` shown for this table: one label per cell,
     /// ragged rows padded to the widest row's column count, columns aligned
     /// per the delimiter row, and spanning cells merged into their neighbors.
+    /// `@MainActor`: constructs and measures `NSTextField`/`NSGridView` instances, which are
+    /// main-thread-only by nature. Every caller is TextKit layout or a host preparing to
+    /// display, both already on main.
+    @MainActor
     func makeGridView() -> NSGridView {
         let columnCount = max(headerCells.count, rows.map(\.count).max() ?? 0)
 
@@ -165,6 +169,10 @@ public final class MarkdownTableAttachment: NSTextAttachment {
     /// `viewProvider` as a blank glyph, so a TK1 text view sets this image as the
     /// attachment's `image`. Call once the surface width is known; re-call on a width
     /// or theme change. Returns nil if there's no room to lay the table out.
+    /// `@MainActor`: constructs and measures `NSTextField`/`NSGridView` instances, which are
+    /// main-thread-only by nature. Every caller is TextKit layout or a host preparing to
+    /// display, both already on main.
+    @MainActor
     public func renderImage(maxWidth: CGFloat) -> NSImage? {
         let inner = maxWidth - MarkdownTableContainerView.padding.width * 2
         guard inner > 20 else { return nil }
@@ -197,6 +205,7 @@ public final class MarkdownTableAttachment: NSTextAttachment {
     /// its natural single-line size. Idempotent per width — layout calls
     /// ``MarkdownTableViewProvider/attachmentBounds(for:location:textContainer:proposedLineFragment:position:)``
     /// repeatedly.
+    @MainActor
     func fit(grid: NSGridView, to maxWidth: CGFloat) {
         let columnCount = grid.numberOfColumns
         guard maxWidth > 0, columnCount > 0, grid.numberOfRows > 0 else { return }
@@ -305,6 +314,7 @@ public final class MarkdownTableAttachment: NSTextAttachment {
     /// greater than one). Covered cells (span 0) are skipped — they are the
     /// empty placeholders the merge swallows — and every range is clamped to
     /// the grid bounds so malformed span data can never crash the view.
+    @MainActor
     private func mergeSpans(in grid: NSGridView) {
         var spansByGridRow: [[CellSpan]] = []
         if !headerCells.isEmpty { spansByGridRow.append(headerSpans) }
@@ -328,20 +338,33 @@ public final class MarkdownTableAttachment: NSTextAttachment {
 
 /// The TextKit 2 view provider for ``MarkdownTableAttachment``: hosts the
 /// table's `NSGridView` and reports its fitting size as the attachment bounds.
-final class MarkdownTableViewProvider: NSTextAttachmentViewProvider {
+/// `@unchecked Sendable` is what lets the `assumeIsolated` blocks below capture `self`.
+/// The claim is narrow and true: TextKit creates and drives a view provider only from the
+/// main-thread layout pass, nothing here hands one to another thread, and each override
+/// asserts that isolation at runtime rather than assuming it silently.
+final class MarkdownTableViewProvider: NSTextAttachmentViewProvider, @unchecked Sendable {
 
     /// Builds the hosted table view — the grid wrapped in a chrome-drawing
     /// container (an empty `NSView` for a foreign attachment).
+    ///
+    /// `MainActor.assumeIsolated` because `NSTextAttachmentViewProvider` is not annotated
+    /// `@MainActor` in the SDK, yet TextKit only ever drives it from the layout pass on the
+    /// main thread — and the body builds `NSView`s, which admit no other thread. Overriding
+    /// with a `@MainActor` signature is not allowed against a nonisolated superclass method,
+    /// so asserting the isolation is the available option. Unlike a silencer, this traps if
+    /// the assumption is ever violated.
     override func loadView() {
-        if let attachment = textAttachment as? MarkdownTableAttachment {
-            view = MarkdownTableContainerView(
-                grid: attachment.makeGridView(),
-                borderColor: attachment.borderColor,
-                headerBackground: attachment.headerBackground,
-                hasHeader: !attachment.headerCells.isEmpty
-            )
-        } else {
-            view = NSView()
+        MainActor.assumeIsolated {
+            if let attachment = textAttachment as? MarkdownTableAttachment {
+                view = MarkdownTableContainerView(
+                    grid: attachment.makeGridView(),
+                    borderColor: attachment.borderColor,
+                    headerBackground: attachment.headerBackground,
+                    hasHeader: !attachment.headerCells.isEmpty
+                )
+            } else {
+                view = NSView()
+            }
         }
     }
 
@@ -356,16 +379,19 @@ final class MarkdownTableViewProvider: NSTextAttachmentViewProvider {
         proposedLineFragment: CGRect,
         position: CGPoint
     ) -> CGRect {
-        if view == nil { loadView() }
-        if let container = view as? MarkdownTableContainerView,
-           let attachment = textAttachment as? MarkdownTableAttachment {
-            // The container adds padding around the grid so the cells breathe
-            // against the border strokes — fit the grid to what remains.
-            attachment.fit(grid: container.grid,
-                           to: proposedLineFragment.width - MarkdownTableContainerView.padding.width * 2)
+        // Main-thread-only for the same reason as `loadView` above.
+        MainActor.assumeIsolated {
+            if view == nil { loadView() }
+            if let container = view as? MarkdownTableContainerView,
+               let attachment = textAttachment as? MarkdownTableAttachment {
+                // The container adds padding around the grid so the cells breathe
+                // against the border strokes — fit the grid to what remains.
+                attachment.fit(grid: container.grid,
+                               to: proposedLineFragment.width - MarkdownTableContainerView.padding.width * 2)
+            }
+            let size = view?.fittingSize ?? .zero
+            return CGRect(origin: .zero, size: size)
         }
-        let size = view?.fittingSize ?? .zero
-        return CGRect(origin: .zero, size: size)
     }
 }
 
