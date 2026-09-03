@@ -354,16 +354,20 @@ final class MarkdownTableViewProvider: NSTextAttachmentViewProvider, @unchecked 
     /// so asserting the isolation is the available option. Unlike a silencer, this traps if
     /// the assumption is ever violated.
     override func loadView() {
+        // `nonisolated(unsafe) let me`: the region checker cannot see that TextKit only calls
+        // this on the main thread; `assumeIsolated` asserts it at runtime, and the local
+        // sidesteps the "sending 'self'" diagnostic without weakening that assertion.
+        nonisolated(unsafe) let me = self
         MainActor.assumeIsolated {
-            if let attachment = textAttachment as? MarkdownTableAttachment {
-                view = MarkdownTableContainerView(
+            if let attachment = me.textAttachment as? MarkdownTableAttachment {
+                me.view = MarkdownTableContainerView(
                     grid: attachment.makeGridView(),
                     borderColor: attachment.borderColor,
                     headerBackground: attachment.headerBackground,
                     hasHeader: !attachment.headerCells.isEmpty
                 )
             } else {
-                view = NSView()
+                me.view = NSView()
             }
         }
     }
@@ -380,16 +384,17 @@ final class MarkdownTableViewProvider: NSTextAttachmentViewProvider, @unchecked 
         position: CGPoint
     ) -> CGRect {
         // Main-thread-only for the same reason as `loadView` above.
-        MainActor.assumeIsolated {
-            if view == nil { loadView() }
-            if let container = view as? MarkdownTableContainerView,
-               let attachment = textAttachment as? MarkdownTableAttachment {
+        nonisolated(unsafe) let me = self
+        return MainActor.assumeIsolated {
+            if me.view == nil { me.loadView() }
+            if let container = me.view as? MarkdownTableContainerView,
+               let attachment = me.textAttachment as? MarkdownTableAttachment {
                 // The container adds padding around the grid so the cells breathe
                 // against the border strokes — fit the grid to what remains.
                 attachment.fit(grid: container.grid,
                                to: proposedLineFragment.width - MarkdownTableContainerView.padding.width * 2)
             }
-            let size = view?.fittingSize ?? .zero
+            let size = me.view?.fittingSize ?? .zero
             return CGRect(origin: .zero, size: size)
         }
     }
