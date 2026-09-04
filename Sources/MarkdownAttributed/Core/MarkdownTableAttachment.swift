@@ -274,7 +274,7 @@ public final class MarkdownTableAttachment: NSTextAttachment {
     /// Distributes `available` across columns: columns whose natural width fits under the
     /// current fair share keep it; what's left is split among the wider ones, floored at
     /// `minColumnWidth` so a column never becomes unreadably narrow (even if that overflows).
-    private static func allot(_ natural: [CGFloat], within available: CGFloat, minColumnWidth: CGFloat = 40) -> [CGFloat] {
+    static func allot(_ natural: [CGFloat], within available: CGFloat, minColumnWidth: CGFloat = 40) -> [CGFloat] {
         var allotted = natural
         var flexible = Set(natural.indices)
         var remaining = available
