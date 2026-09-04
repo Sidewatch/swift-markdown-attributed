@@ -53,6 +53,12 @@ let text = MarkdownAttributed.render(markdown, style: style)
 
 Tables require a TextKit 2 text view (`NSTextView(usingTextLayoutManager: true)`) — the table attachment vends an `NSTextAttachmentViewProvider` that hosts an `NSGridView`. The cell strings are also exposed directly on `MarkdownTableAttachment` (`headerCells` / `rows`) if you want to render them yourself.
 
+## For agents
+
+Read `CONTRIBUTING.md` first: the folder layout and the PR rules. `swift test` is the whole
+check, and a new test must fail before the change it covers. `CLAUDE.md` / `AGENTS.md` carry a
+module map.
+
 ## License
 
 MIT

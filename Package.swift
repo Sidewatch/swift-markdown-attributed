@@ -3,9 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MarkdownAttributed",
-    platforms: [
-        .macOS(.v13)
-    ],
+    platforms: [.macOS(.v14)],
     products: [
         .library(name: "MarkdownAttributed", targets: ["MarkdownAttributed"]),
     ],
@@ -17,7 +15,7 @@ let package = Package(
             name: "MarkdownAttributed",
             dependencies: [.product(name: "Markdown", package: "swift-markdown")],
             path: "Sources",
-            swiftSettings: [.unsafeFlags(["-strict-concurrency=complete"])]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "MarkdownAttributedTests",
