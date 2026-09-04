@@ -19,7 +19,7 @@ A Markdown → `NSAttributedString` renderer built on Apple's [swift-markdown](h
 ## Requirements
 
 - macOS 14+ (AppKit)
-- Swift 6.0+ (Swift 6 language mode)
+- Swift 6.2+ (Swift 6 language mode)
 
 ## Installation
 
