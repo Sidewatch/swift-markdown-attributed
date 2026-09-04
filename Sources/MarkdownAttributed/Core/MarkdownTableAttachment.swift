@@ -209,76 +209,74 @@ public final class MarkdownTableAttachment: NSTextAttachment {
     func fit(grid: NSGridView, to maxWidth: CGFloat) {
         let columnCount = grid.numberOfColumns
         guard maxWidth > 0, columnCount > 0, grid.numberOfRows > 0 else { return }
-
-        // Enumerate every label ONCE, with the column span it covers.
-        // `NSGridView` returns a merged cell's HEAD label for every covered
-        // position, so a naive per-position sweep counts a colspan-N label N
-        // times: its full width max'd into EVERY spanned column (spuriously
-        // triggering the overflow path and starving the other columns), then
-        // the wrap pass clamping it to a single column's allotment.
-        struct Entry { let label: NSTextField; let column: Int; var span: Int }
-        var entries: [Entry] = []
-        var entryIndex: [ObjectIdentifier: Int] = [:]
-        for row in 0..<grid.numberOfRows {
-            for column in 0..<columnCount {
-                guard let label = grid.cell(atColumnIndex: column, rowIndex: row).contentView as? NSTextField else { continue }
-                let id = ObjectIdentifier(label)
-                if let i = entryIndex[id] {
-                    // Seen again: a covered position. Extend the colspan when it
-                    // reaches further right (rowspan repeats keep the span as-is).
-                    entries[i].span = max(entries[i].span, column - entries[i].column + 1)
-                    continue
-                }
-                entryIndex[id] = entries.count
-                entries.append(Entry(label: label, column: column, span: 1))
-            }
-        }
-        /// The columns `entry` covers, clamped to the grid.
-        func columns(of entry: Entry) -> Range<Int> {
-            entry.column..<min(entry.column + entry.span, columnCount)
-        }
-
-        // Reset to single-line first — wrapping labels from a previous fit
-        // measure at their allotted width, so this keeps the pass idempotent
-        // and lets columns grow back when the pane widens.
-        for entry in entries {
-            entry.label.lineBreakMode = .byClipping
-            entry.label.usesSingleLineMode = false
-            entry.label.cell?.wraps = false
-            entry.label.maximumNumberOfLines = 1
-            entry.label.preferredMaxLayoutWidth = 0
-        }
-
-        // Natural (single-line) width of every column: widest single-column
-        // label wins. A spanning label then widens its columns only by the
-        // deficit its combined columns (plus the spacing it bridges) can't
-        // already hold, split evenly — never its full width per column.
-        var natural = [CGFloat](repeating: 0, count: columnCount)
-        for entry in entries where entry.span == 1 {
-            natural[entry.column] = max(natural[entry.column], ceil(entry.label.fittingSize.width))
-        }
-        for entry in entries where entry.span > 1 {
-            let cols = columns(of: entry)
-            let bridged = grid.columnSpacing * CGFloat(cols.count - 1)
-            let have = cols.reduce(0) { $0 + natural[$1] } + bridged
-            let need = ceil(entry.label.fittingSize.width)
-            if need > have {
-                let extra = (need - have) / CGFloat(cols.count)
-                for c in cols { natural[c] += extra }
-            }
-        }
-
-        let spacing = grid.columnSpacing * CGFloat(max(0, columnCount - 1))
-        let available = maxWidth - spacing
+        let cells = TableCell.collect(from: grid)
+        // Reset to single-line first — wrapping labels from a previous fit measure at their
+        // allotted width, so this keeps the pass idempotent and lets columns grow back.
+        for cell in cells { cell.label.setSingleLine() }
+        let natural = Self.naturalWidths(cells, columnCount: columnCount, spacing: grid.columnSpacing)
+        let available = maxWidth - grid.columnSpacing * CGFloat(max(0, columnCount - 1))
         guard natural.reduce(0, +) > available, available > 0 else { return }
+        let allotted = Self.allot(natural, within: available)
+        for cell in cells {
+            let cols = cell.columns(clampedTo: columnCount)
+            let bridged = grid.columnSpacing * CGFloat(cols.count - 1)
+            let allottedWidth = cols.reduce(0) { $0 + allotted[$1] } + bridged
+            let naturalWidth = cols.reduce(0) { $0 + natural[$1] } + bridged
+            if allottedWidth < naturalWidth { cell.label.wrap(at: floor(allottedWidth)) }
+        }
+    }
 
-        // Distribute `available` across columns: repeatedly grant columns
-        // whose natural width fits under the current fair share, then split
-        // what's left among the wider ones (floored so a column never
-        // becomes unreadably narrow, even if that overflows a hair).
-        let minColumnWidth: CGFloat = 40
+    /// One label in the grid with the column span it covers. `NSGridView` returns a merged
+    /// cell's HEAD label for every covered position, so a naive per-position sweep counts a
+    /// colspan-N label N times; this dedupes by label identity and extends the span instead.
+    private struct TableCell {
+        let label: NSTextField
+        let column: Int
+        var span: Int
+
+        @MainActor static func collect(from grid: NSGridView) -> [TableCell] {
+            var cells: [TableCell] = []
+            var index: [ObjectIdentifier: Int] = [:]
+            for row in 0..<grid.numberOfRows {
+                for column in 0..<grid.numberOfColumns {
+                    guard let label = grid.cell(atColumnIndex: column, rowIndex: row).contentView as? NSTextField else { continue }
+                    if let i = index[ObjectIdentifier(label)] {
+                        cells[i].span = max(cells[i].span, column - cells[i].column + 1)   // rowspan repeats keep the span
+                        continue
+                    }
+                    index[ObjectIdentifier(label)] = cells.count
+                    cells.append(TableCell(label: label, column: column, span: 1))
+                }
+            }
+            return cells
+        }
+
+        func columns(clampedTo count: Int) -> Range<Int> { column..<min(column + span, count) }
+    }
+
+    /// Natural single-line width per column: the widest single-column label wins; a spanning
+    /// label then widens its columns only by the deficit its combined columns (plus the spacing
+    /// it bridges) can't already hold, split evenly — never its full width per column.
+    @MainActor private static func naturalWidths(_ cells: [TableCell], columnCount: Int, spacing: CGFloat) -> [CGFloat] {
+        var natural = [CGFloat](repeating: 0, count: columnCount)
+        for cell in cells where cell.span == 1 {
+            natural[cell.column] = max(natural[cell.column], ceil(cell.label.fittingSize.width))
+        }
+        for cell in cells where cell.span > 1 {
+            let cols = cell.columns(clampedTo: columnCount)
+            let have = cols.reduce(0) { $0 + natural[$1] } + spacing * CGFloat(cols.count - 1)
+            let need = ceil(cell.label.fittingSize.width)
+            if need > have { for c in cols { natural[c] += (need - have) / CGFloat(cols.count) } }
+        }
+        return natural
+    }
+
+    /// Distributes `available` across columns: columns whose natural width fits under the
+    /// current fair share keep it; what's left is split among the wider ones, floored at
+    /// `minColumnWidth` so a column never becomes unreadably narrow (even if that overflows).
+    private static func allot(_ natural: [CGFloat], within available: CGFloat, minColumnWidth: CGFloat = 40) -> [CGFloat] {
         var allotted = natural
-        var flexible = Set(0..<columnCount)
+        var flexible = Set(natural.indices)
         var remaining = available
         while !flexible.isEmpty {
             let fair = remaining / CGFloat(flexible.count)
@@ -293,21 +291,7 @@ public final class MarkdownTableAttachment: NSTextAttachment {
                 flexible.remove(column)
             }
         }
-
-        // Wrap the shrunk labels at their allotted width — a spanning label at
-        // the SUM of its columns' allotments plus the spacing it bridges.
-        for entry in entries {
-            let cols = columns(of: entry)
-            let bridged = grid.columnSpacing * CGFloat(cols.count - 1)
-            let allottedWidth = cols.reduce(0) { $0 + allotted[$1] } + bridged
-            let naturalWidth = cols.reduce(0) { $0 + natural[$1] } + bridged
-            guard allottedWidth < naturalWidth else { continue }
-            entry.label.lineBreakMode = .byWordWrapping
-            entry.label.usesSingleLineMode = false
-            entry.label.cell?.wraps = true
-            entry.label.maximumNumberOfLines = 0
-            entry.label.preferredMaxLayoutWidth = floor(allottedWidth)
-        }
+        return allotted
     }
 
     /// Merges the grid regions occupied by spanning cells (colspan/rowspan
@@ -333,5 +317,25 @@ public final class MarkdownTableAttachment: NSTextAttachment {
                 )
             }
         }
+    }
+}
+
+private extension NSTextField {
+    /// Measure as one unwrapped line.
+    func setSingleLine() {
+        lineBreakMode = .byClipping
+        usesSingleLineMode = false
+        cell?.wraps = false
+        maximumNumberOfLines = 1
+        preferredMaxLayoutWidth = 0
+    }
+
+    /// Wrap by words at `width`.
+    func wrap(at width: CGFloat) {
+        lineBreakMode = .byWordWrapping
+        usesSingleLineMode = false
+        cell?.wraps = true
+        maximumNumberOfLines = 0
+        preferredMaxLayoutWidth = width
     }
 }
