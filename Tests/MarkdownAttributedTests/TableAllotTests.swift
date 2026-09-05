@@ -2,7 +2,7 @@
 //  TableAllotTests.swift
 //  MarkdownAttributedTests
 //
-//  TableAllotTests.
+//  Tests for Table Allot.
 //
 //  Created by David Sherlock on 9/5/26.
 //
