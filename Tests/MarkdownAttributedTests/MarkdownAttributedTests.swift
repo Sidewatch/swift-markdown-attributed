@@ -2,6 +2,9 @@
 //  MarkdownAttributedTests.swift
 //  Tests for SwiftMarkdownAttributed
 //
+//  Tests for the markdown to `NSAttributedString` renderer: the attributes each construct
+//  produces under the default style.
+//
 //  Created by David Sherlock on 7/16/26.
 //
 
@@ -12,6 +15,8 @@ import XCTest
 
 // `@MainActor`: these build and measure AppKit views (grid fitting, table rasterization),
 // which is main-thread-only. XCTest already runs test methods on main.
+/// Tests for the markdown to `NSAttributedString` renderer: the attributes each construct
+/// produces under the default style.
 @MainActor
 final class MarkdownAttributedTests: XCTestCase {
 

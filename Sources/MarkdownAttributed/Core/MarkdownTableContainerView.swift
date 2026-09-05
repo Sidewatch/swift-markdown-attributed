@@ -2,6 +2,12 @@
 //  MarkdownTableContainerView.swift
 //  MarkdownAttributed
 //
+//  Hosts a table's `NSGridView` and draws its GitHub-style chrome: a rounded 1px outer border,
+//  hairline rules between rows and columns, an emphasized separator under the header row, and
+//  an optional header fill.
+//
+//  Created by David Sherlock on 9/5/26.
+//
 
 import AppKit
 

@@ -2,7 +2,8 @@
 //  TableAllotTests.swift
 //  MarkdownAttributedTests
 //
-//  Tests for Table Allot.
+//  Tests for `MarkdownTableAttachment.allot`: columns that fit keep their share, the rest split
+//  the remainder, and no column drops below the minimum.
 //
 //  Created by David Sherlock on 9/5/26.
 //
@@ -10,6 +11,8 @@
 import XCTest
 @testable import MarkdownAttributed
 
+/// Tests for `MarkdownTableAttachment.allot`: columns that fit keep their share, the rest split
+/// the remainder, and no column drops below the minimum.
 final class TableAllotTests: XCTestCase {
     func testColumnsThatFitTheirFairShareKeepItAndTheRestSplitTheRemainder() {
         // 20 + 20 fit under the fair share; the wide column gets what is left (60).

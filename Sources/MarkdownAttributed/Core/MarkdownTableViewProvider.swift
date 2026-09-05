@@ -2,6 +2,11 @@
 //  MarkdownTableViewProvider.swift
 //  MarkdownAttributed
 //
+//  The TextKit 2 view provider for ``MarkdownTableAttachment``: hosts the table's `NSGridView`
+//  and reports its fitting size as the attachment bounds.
+//
+//  Created by David Sherlock on 9/5/26.
+//
 
 import AppKit
 
