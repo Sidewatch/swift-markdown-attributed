@@ -30,7 +30,9 @@ final class MarkdownTableViewProvider: NSTextAttachmentViewProvider, @unchecked 
     override func loadView() {
         // `nonisolated(unsafe) let me`: the region checker cannot see that TextKit only calls
         // this on the main thread; `assumeIsolated` asserts it at runtime, and the local
-        // sidesteps the "sending 'self'" diagnostic without weakening that assertion.
+        // sidesteps the "sending 'self'" diagnostic without weakening that assertion. The
+        // compiler flags the annotation as unnecessary; without it the send is an ERROR
+        // (re-checked in the 17 Sep 2026 audit) — the warning is wrong here, keep both.
         nonisolated(unsafe) let me = self
         MainActor.assumeIsolated {
             if let attachment = me.textAttachment as? MarkdownTableAttachment {
