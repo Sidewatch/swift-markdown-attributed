@@ -25,6 +25,12 @@ dead-code and risk-pattern scans, docs drift); line-by-line logic review was tar
 - `MarkdownTableViewProvider`: the two `nonisolated(unsafe) let me = self` are LOAD-BEARING. The compiler warns they are unnecessary; removing them is a build ERROR (`sending 'me' risks causing data races`). Re-checked in this audit — leave them, the comment on them now says so.
 - `visitSymbolLink`, `visitCustomInline`, `visitInlineAttributes`, `visitBlockDirective`, `visitCustomBlock`, `visitDoxygen*` show as unreferenced — they are `MarkupVisitor` requirements dispatched by swift-markdown, not dead.
 
+## Status
+
+- **Not used by Sidewatch since 18 Sep 2026.** The app's markdown PDF export now prints its WebKit preview
+  (`MarkdownPDFExporter`), which retired `MarkdownRenderView`. The package stays published and tested for other
+  hosts; archive it if nothing else adopts it.
+
 ## History
 
 - 17 Sep 2026 — full audit (app + all 20 libraries), Claude with David.
