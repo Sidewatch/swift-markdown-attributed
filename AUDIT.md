@@ -47,3 +47,4 @@ row/column.
 
 - 17 Sep 2026 — full audit (app + all 20 libraries), Claude with David.
 - 18 Sep 2026 — logic review (every source and test file, line by line), Claude with David.
+- 18 Sep 2026 — archived: unused by Sidewatch since the PDF export moved to the web renderer. Read-only from here.

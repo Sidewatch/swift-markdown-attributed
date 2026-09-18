@@ -2,6 +2,7 @@
 
 A Markdown → `NSAttributedString` renderer built on Apple's [swift-markdown](https://github.com/apple/swift-markdown) (cmark-gfm), for native AppKit previews — an `NSTextView` / TextKit 2 replacement for a WKWebView.
 
+- **Archived 18 Sep 2026** — no longer a Sidewatch dependency; read-only. Nothing here needs work.
 - Module `MarkdownAttributed` in `Sources/MarkdownAttributed`; tests in `Tests`; `swift test` is the whole check.
 - Swift 6 language mode, tools 6.2, macOS 14+, no dependencies unless the README says so.
 - Part of the Sidewatch package family; every package follows the same layout and PR rules.

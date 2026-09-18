@@ -1,5 +1,10 @@
 # Swift Markdown Attributed
 
+> **Archived 18 Sep 2026.** Sidewatch stopped using this package when its Markdown PDF export moved to the
+> preview's WKWebView (`printOperation(with:)` paginates; the TextKit path printed code unhighlighted and
+> double-spaced). The package still builds and its tests pass; it is kept read-only for anyone who wants a
+> native `NSAttributedString` Markdown renderer. No further changes are planned.
+
 A Markdown → `NSAttributedString` renderer built on Apple's [swift-markdown](https://github.com/apple/swift-markdown) (cmark-gfm), for native AppKit previews — an `NSTextView` / TextKit 2 replacement for a WKWebView.
 
 ## Features
