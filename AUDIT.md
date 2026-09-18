@@ -20,6 +20,18 @@ dead-code and risk-pattern scans, docs drift); line-by-line logic review was tar
 - Build: clean. Tests: green.
 - Nothing to fix in this package.
 
+## Logic review — 18 Sep 2026 (every source and test file, line by line)
+
+Nothing to fix. Checked: `AttributedRenderer`'s inline state save/restore (traits, strikethrough,
+link) around every container, the pending list marker (consumed by the item's first block, flushed
+as its own row for an empty item or one that opens with a nested list, never leaked into a
+sibling), the hanging-indent maths at every quote/list depth, the attachment line-height reset,
+`resolveImageURL` refusing everything but file URLs; `MarkdownTableAttachment.fit`'s idempotence
+(labels reset to single-line before measuring), `allot` terminating (each pass fixes at least one
+column or breaks), `mergeSpans` clamped to the grid, `TableCell.collect` deduping a merged cell's
+head label, and `MarkdownTableContainerView.cellExtents` attributing a span only to its head
+row/column.
+
 ## Known non-issues (do not "fix" these again)
 
 - `MarkdownTableViewProvider`: the two `nonisolated(unsafe) let me = self` are LOAD-BEARING. The compiler warns they are unnecessary; removing them is a build ERROR (`sending 'me' risks causing data races`). Re-checked in this audit — leave them, the comment on them now says so.
@@ -34,3 +46,4 @@ dead-code and risk-pattern scans, docs drift); line-by-line logic review was tar
 ## History
 
 - 17 Sep 2026 — full audit (app + all 20 libraries), Claude with David.
+- 18 Sep 2026 — logic review (every source and test file, line by line), Claude with David.
